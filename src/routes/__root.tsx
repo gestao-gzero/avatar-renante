@@ -91,6 +91,15 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/063565fe-3bae-46ee-8ab6-3b564b395a36/id-preview-537150c8--dc025edc-ea0b-4682-ad4d-6583d0591e5a.lovable.app-1781005685202.png" },
     ],
     links: [
+      // Fontes no <head> (não mais via @import no CSS): preconnect aquece a conexão
+      // e o navegador descobre a fonte já no HTML inicial, sem esperar o CSS baixar.
+      // display=swap (na URL) mostra o texto na hora com fallback e troca depois.
+      { rel: "preconnect", href: "https://fonts.googleapis.com" },
+      { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap",
+      },
       {
         rel: "stylesheet",
         href: appCss,

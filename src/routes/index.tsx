@@ -99,6 +99,7 @@ type Settings = {
 
 type MeetModeConfig = {
   greeting: string; // fala inicial ao entrar/conectar (vazio = não fala nada)
+  transitionGreeting: string; // fala CURTA ao trocar p/ este modo no meio da chamada (vazio = silêncio)
   reconnectGreeting: string; // fala ao reconectar no hot-swap (vazio = não fala nada)
   behavior: "wake" | "always"; // "wake" = só responde após o nome; "always" = responde tudo
   bargeIn: boolean; // permitir interromper a fala dele falando por cima
@@ -123,18 +124,21 @@ const DEFAULT_SETTINGS: Settings = {
   meetConfigs: {
     conversa: {
       greeting: "Olá! Eu sou o Renante, da Gravidade Zero. Podem falar comigo à vontade.",
+      transitionGreeting: "Certo, seguindo no modo conversa.",
       reconnectGreeting: "Eita, caiu a conexão — pode continuar de onde estava.",
       behavior: "always",
       bargeIn: true,
     },
     reuniao: {
       greeting: "Olá pessoal! Eu sou o Renante, da Gravidade Zero. É só me chamar pelo nome quando precisarem.",
+      transitionGreeting: "Beleza, entrando no modo reunião.",
       reconnectGreeting: "Eita, caiu a conexão — pode continuar de onde estava.",
       behavior: "wake",
       bargeIn: true,
     },
     entrevistador: {
       greeting: "Oi, tudo bem? Eu sou o Renante, uma mistura do conciente do Renan e Dante e vou conduzir essa conversa. Pra gente começar, qual é o seu nome?",
+      transitionGreeting: "Pronto, vamos para a entrevista.",
       reconnectGreeting: "Eita, caiu a conexão — pode continuar de onde estava.",
       behavior: "always",
       bargeIn: true,
@@ -554,6 +558,10 @@ function Index() {
   // Ao gerar um sufixo novo, o n8n vê um sessionId novo → começa do zero (contexto limpo).
   const conversationTagRef = useRef("");
   const [conversationTag, setConversationTag] = useState("");
+  // Fala inicial (greeting completo) já ocorreu NESTA chamada? Fica true depois do
+  // 1º connect e volta a false no stop. Enquanto true, trocar de modo NÃO refala a
+  // saudação inteira — só dispara a frase curta de transição.
+  const hasGreetedRef = useRef(false);
   // Hot-swap: reinício automático da sessão HeyGen preservando contexto (que vive no n8n).
   const sessionStartedAtRef = useRef(0);
   const swapInProgressRef = useRef(false);
@@ -837,6 +845,36 @@ function Index() {
     },
     [log],
   );
+
+  // Transição de modo NO MEIO da chamada: em vez de refalar a saudação inteira (o que
+  // soa robótico), o avatar diz só uma frase curta e natural de transição, configurável
+  // por modo. Só dispara com a chamada já iniciada (hasGreetedRef) e sessão viva — nunca
+  // no load inicial nem antes de conectar. A fala inicial completa é exclusiva da 1ª
+  // conexão (startSession). Interrompe o que estiver falando pra emendar na hora.
+  useEffect(() => {
+    const sess = sessionRef.current;
+    if (!hasGreetedRef.current || !sess) return;
+    const phrase = (settingsRef.current.meetConfigs[mode]?.transitionGreeting ?? "").trim();
+    if (!phrase) return;
+    log(`transição de modo → "${phrase}" (modo=${mode})`, "ok");
+    let cancelled = false;
+    void (async () => {
+      try {
+        (sess as any)?.interrupt?.();
+      } catch {}
+      await new Promise((r) => window.setTimeout(r, 120));
+      // Se um hot-swap trocou a sessão nesse meio-tempo, não fala na sessão antiga.
+      if (cancelled || sessionRef.current !== sess) return;
+      try {
+        sess.repeat(phrase);
+      } catch (e) {
+        logError("fala de transição falhou", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, log, logError]);
 
   const attemptVideoPlay = useCallback(async () => {
     const video = videoRef.current;
@@ -1929,6 +1967,9 @@ function Index() {
           logError("fala inicial falhou", e);
         }
       }
+      // A chamada começou: a partir daqui, trocar de modo só dispara a frase curta
+      // de transição — nunca mais o greeting inteiro (vale mesmo se o greeting estava vazio).
+      hasGreetedRef.current = true;
 
       // Arma o hot-swap: pré-aquece e troca a sessão antes do limite do plano.
       sessionStartedAtRef.current = Date.now();
@@ -1966,6 +2007,7 @@ function Index() {
     }
     sessionRef.current = null;
     setConnected(false);
+    hasGreetedRef.current = false; // próxima conexão volta a ser "1ª" (greeting completo)
     setStatus("token", "waiting", "Sem sessão (clique em Conectar avatar)");
     setStatus("session", "waiting", "Sessão encerrada pelo usuário");
     setStatus("video", "waiting", "Sem stream");
@@ -3939,7 +3981,7 @@ function Index() {
                 { id: "reuniao" as Mode, name: "Reunião", tag: "wake word", tagCls: "blue" },
                 { id: "entrevistador" as Mode, name: "Entrevistador", tag: "sempre ativo", tagCls: "" },
               ]).map((m) => {
-                const cfg = settings.meetConfigs[m.id] ?? { greeting: "", reconnectGreeting: "", behavior: "always" as const, bargeIn: false };
+                const cfg = settings.meetConfigs[m.id] ?? { greeting: "", transitionGreeting: "", reconnectGreeting: "", behavior: "always" as const, bargeIn: false };
                 return (
                   <div key={m.id} className={`modecard${mode === m.id ? " active" : ""}`} onClick={() => setMode(m.id)}>
                     <div className="mh"><b>{m.name}</b><span className={`modetag${mode === m.id ? " active" : m.tagCls ? " " + m.tagCls : ""}`}>{m.tag}</span></div>
@@ -3949,6 +3991,15 @@ function Index() {
                         value={cfg.greeting}
                         onChange={(e) => updateMeetConfig(m.id, { greeting: e.target.value })}
                         placeholder="Fala ao conectar pela 1ª vez…"
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: "10.5px", fontWeight: 500, color: "var(--ink-2)", display: "block", marginBottom: 3 }}>Fala ao trocar de modo <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--ink-3)", marginLeft: 4 }}>no meio da chamada</span></label>
+                      <textarea className="inp" rows={2} spellCheck={false}
+                        value={cfg.transitionGreeting}
+                        onChange={(e) => updateMeetConfig(m.id, { transitionGreeting: e.target.value })}
+                        placeholder="Frase curta ao trocar p/ este modo (vazio = silêncio)…"
                         onClick={(e) => e.stopPropagation()}
                       />
                     </div>
@@ -4820,6 +4871,23 @@ function Index() {
                               placeholder="Deixe vazio para não falar nada ao entrar"
                               className="w-full resize-y rounded-md border border-border bg-input px-3 py-2 text-sm"
                             />
+                          </label>
+                          <label className="block text-sm">
+                            <span className="mb-1 block text-xs font-medium">
+                              Fala ao trocar de modo (no meio da chamada)
+                            </span>
+                            <textarea
+                              value={c.transitionGreeting}
+                              onChange={(e) => upd({ transitionGreeting: e.target.value })}
+                              rows={2}
+                              placeholder="Frase curta ao trocar p/ este modo (vazio = silêncio)"
+                              className="w-full resize-y rounded-md border border-border bg-input px-3 py-2 text-sm"
+                            />
+                            <span className="mt-1 block text-xs text-muted-foreground">
+                              Dita quando você troca de modo com a chamada já em andamento.
+                              Substitui a fala inicial completa (que agora só toca na 1ª conexão).
+                              Vazio = troca em silêncio.
+                            </span>
                           </label>
                           <label className="block text-sm">
                             <span className="mb-1 block text-xs font-medium">
