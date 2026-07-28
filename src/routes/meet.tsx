@@ -24,13 +24,19 @@ import { getMeetListenPaused } from "@/lib/listen-control.functions";
 
 export const Route = createFileRoute("/meet")({
   head: () => ({
-    meta: [{ title: "Renante — Avatar na Reunião" }],
+    meta: [{ title: "Renan — Avatar na Reunião" }],
   }),
   component: MeetAvatar,
 });
 
 const SPEAK_TIMEOUT_MS = 60_000;
 const RECALL_TRANSCRIPT_WS = "wss://meeting-data.bot.recall.ai/api/v1/transcript";
+// Hot-swap (Camada 3): mesma mecânica do console (index.tsx) — reconecta a sessão
+// HeyGen antes do cap de 5 min do plano, preservando o contexto (que vive no n8n).
+// Sem isso, uma sessão de /meet aberta por mais de ~5 min simplesmente cai.
+const HOT_SWAP_AFTER_SEC_DEFAULT = 270;
+const HOT_SWAP_MIN_SEC = 20;
+const HOT_SWAP_MAX_DEFER_MS = 20_000;
 
 // Mesma lógica do modo Reunião do app principal (tolerante a variações do ASR).
 const WAKE_RE = /\b(renante|renan|renando|renato|render|dante)\b/;
@@ -54,6 +60,8 @@ type Cfg = {
   sid: string; // sessionId enviado ao webhook (= modo: conversa/reuniao/entrevistador)
   silenceSec: number; // pausa de silêncio antes de fechar a fala e mandar pro n8n
   authToken: string; // token de login (repassado ao getSessionToken)
+  hotSwapAfterSec: number; // intervalo (s) entre reconexões automáticas (hot-swap)
+  reconnectGreeting: string; // fala ao reconectar no hot-swap (vazio = não fala nada)
 };
 
 function readConfig(): Cfg {
@@ -75,6 +83,8 @@ function readConfig(): Cfg {
     sid: q.get("sid") || "reuniao",
     silenceSec: Number(q.get("sil")) || 0.5,
     authToken: q.get("auth") ?? "",
+    hotSwapAfterSec: Number(q.get("hs")) || HOT_SWAP_AFTER_SEC_DEFAULT,
+    reconnectGreeting: q.get("rg") ?? "",
   };
 }
 
@@ -94,6 +104,13 @@ function MeetAvatar() {
   // Idempotência: bloqueia handleSend duplicado pro mesmo texto numa janela curta.
   const lastSendRef = useRef<{ text: string; timestamp: number }>({ text: "", timestamp: 0 });
   const cfgRef = useRef<Cfg>(readConfig());
+  // ── hot-swap (reconexão automática antes do cap de duração do plano) ──
+  const hotSwapTimerRef = useRef<number | null>(null);
+  const swapInProgressRef = useRef(false);
+  const prewarmSwapRef = useRef<(() => void) | null>(null);
+  // Última fala em andamento (texto + início), p/ retomar de onde parou se um
+  // hot-swap cortar a frase no meio (igual ao console — ver index.tsx).
+  const currentUtteranceRef = useRef<{ text: string; startedAt: number } | null>(null);
   // Buffer + timer de silêncio: acumula os trechos e só envia quando a pessoa para.
   const meetBufferRef = useRef("");
   const meetSilenceTimerRef = useRef<number | null>(null);
@@ -162,9 +179,11 @@ function MeetAvatar() {
         };
         session.on(AgentEventsEnum.AVATAR_SPEAK_ENDED, onEnd);
       });
+      currentUtteranceRef.current = { text: clean, startedAt: Date.now() };
       const eventId = session.repeat(clean);
       log(`speak_text: "${clean}" (event_id=${eventId})`, "ok");
       await ended;
+      currentUtteranceRef.current = null;
     },
     [log, waitForAvatarEnd],
   );
@@ -196,7 +215,7 @@ function MeetAvatar() {
 
       const sendTs = typeof performance !== "undefined" ? performance.now() : Date.now();
 
-      const renanteP = fetch(s.webhookReuniao, {
+      const renanP = fetch(s.webhookReuniao, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -218,7 +237,7 @@ function MeetAvatar() {
 
       // Só fala quando está ATIVO (responder=true). Senão é só contexto de ambiente.
       if (!responder) {
-        const j: any = await renanteP;
+        const j: any = await renanP;
         log(`(dormindo) resposta ignorada: ${JSON.stringify(j)?.slice(0, 200)}`);
         return;
       }
@@ -273,19 +292,19 @@ function MeetAvatar() {
         }
       });
 
-      const renanteJson: any = await renanteP;
-      const renanteText = (renanteJson?.output ?? renanteJson?.text ?? renanteJson?.message ?? "")
+      const renanJson: any = await renanP;
+      const renanText = (renanJson?.output ?? renanJson?.text ?? renanJson?.message ?? "")
         .toString()
         .trim();
-      if (!renanteText) {
+      if (!renanText) {
         log("output vazio — avatar calado");
         await fillerSpeakP.catch(() => {});
         return;
       }
       await fillerSpeakP.catch(() => {});
-      log(`resposta Renante: "${renanteText}"`, "ok");
+      log(`resposta Renan: "${renanText}"`, "ok");
       try {
-        await speakAndWait(renanteText);
+        await speakAndWait(renanText);
       } catch (e: any) {
         log(`erro speak resposta: ${e?.message ?? e}`, "err");
       }
@@ -454,6 +473,178 @@ function MeetAvatar() {
     setNeedsGesture(true);
   }, []);
 
+  // Listeners comuns a QUALQUER sessão (inicial ou pré-aquecida no hot-swap).
+  // SESSION_STREAM_READY fica de fora: cada chamador trata o "stream pronto" à
+  // sua maneira (boot() attacha direto; o hot-swap só promove quando o vídeo
+  // da NOVA sessão está pronto — ver prewarmAndSwap).
+  const registerSessionEvents = useCallback((session: LiveAvatarSession) => {
+    session.on(SessionEvent.SESSION_STATE_CHANGED, (st: any) => {
+      // Durante o hot-swap a sessão antiga continua emitindo eventos: ignora pra
+      // não rebaixar o estado enquanto a nova sessão assume (mesmo guard do console).
+      if (session !== sessionRef.current) return;
+      if (st === "CONNECTED") connectedRef.current = true;
+      if (st === "DISCONNECTED") connectedRef.current = false;
+    });
+    session.on(AgentEventsEnum.AVATAR_SPEAK_STARTED, () => {
+      isAvatarSpeakingRef.current = true;
+      setSpeaking(true);
+    });
+    session.on(AgentEventsEnum.AVATAR_SPEAK_ENDED, () => {
+      isAvatarSpeakingRef.current = false;
+      setSpeaking(false);
+    });
+  }, []);
+
+  // ===== HOT-SWAP — mesma mecânica do console (index.tsx), portada pra dentro do
+  // Meet: pré-aquece uma 2ª sessão HeyGen e troca o <video> antes do cap de 5 min
+  // do plano. O "cérebro" (n8n) é independente da sessão, então o contexto segue. =====
+  const scheduleHotSwap = useCallback(() => {
+    if (hotSwapTimerRef.current !== null) window.clearTimeout(hotSwapTimerRef.current);
+    const sec = Math.max(HOT_SWAP_MIN_SEC, cfgRef.current.hotSwapAfterSec || HOT_SWAP_AFTER_SEC_DEFAULT);
+    hotSwapTimerRef.current = window.setTimeout(() => {
+      prewarmSwapRef.current?.();
+    }, sec * 1000);
+    log(`HOT-SWAP agendado para daqui a ${sec}s`);
+  }, [log]);
+
+  const prewarmAndSwap = useCallback(async () => {
+    if (swapInProgressRef.current) return;
+    const oldSession = sessionRef.current;
+    if (!oldSession) return;
+    swapInProgressRef.current = true;
+
+    // Fala uma frase numa sessão específica e resolve quando ela termina (ou timeout).
+    const speakOn = (sess: LiveAvatarSession, txt: string) =>
+      new Promise<void>((resolve) => {
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          window.clearTimeout(timer);
+          try {
+            sess.off(AgentEventsEnum.AVATAR_SPEAK_ENDED, finish);
+          } catch {}
+          resolve();
+        };
+        const timer = window.setTimeout(finish, SPEAK_TIMEOUT_MS);
+        sess.on(AgentEventsEnum.AVATAR_SPEAK_ENDED, finish);
+        try {
+          sess.repeat(txt);
+        } catch {
+          finish();
+        }
+      });
+
+    try {
+      // 1) Se o avatar está falando, ESPERA terminar a frase (até um limite de
+      //    segurança). Só corta no meio se estourar esse limite.
+      let forcedCut = false;
+      if (isAvatarSpeakingRef.current) {
+        log("HOT-SWAP: avatar falando — aguardando ele terminar a frase…");
+        const ended = await new Promise<boolean>((resolve) => {
+          let done = false;
+          const finish = (val: boolean) => {
+            if (done) return;
+            done = true;
+            window.clearTimeout(timer);
+            try {
+              oldSession.off(AgentEventsEnum.AVATAR_SPEAK_ENDED, onEnd);
+            } catch {}
+            resolve(val);
+          };
+          const onEnd = () => finish(true);
+          const timer = window.setTimeout(() => finish(false), HOT_SWAP_MAX_DEFER_MS);
+          oldSession.on(AgentEventsEnum.AVATAR_SPEAK_ENDED, onEnd);
+        });
+        if (ended) {
+          log("HOT-SWAP: frase terminou — trocando em silêncio", "ok");
+        } else {
+          forcedCut = true;
+          log("HOT-SWAP: limite de espera atingido — vai cortar e retomar de onde parou", "ok");
+        }
+      }
+
+      // Guarda a fala em andamento p/ retomar SÓ se a troca cortar no meio.
+      const pending = forcedCut ? currentUtteranceRef.current : null;
+
+      log("HOT-SWAP: pré-aquecendo nova sessão (contexto preservado no n8n)…", "ok");
+      const cfg = cfgRef.current;
+      const tokenResult = await fetchToken({
+        data: {
+          apiKey: cfg.apiKey,
+          avatarId: cfg.avatarId,
+          voiceId: cfg.voiceId,
+          contextId: cfg.contextId,
+          language: cfg.language,
+          authToken: cfg.authToken,
+        },
+      });
+      const newSession = new LiveAvatarSession(tokenResult.session_token, { voiceChat: false });
+      registerSessionEvents(newSession);
+
+      // Quando o stream da NOVA sessão estiver pronto: promove e descarta a antiga.
+      const promote = () => {
+        newSession.off(SessionEvent.SESSION_STREAM_READY, promote);
+        const cutElapsedMs = pending ? Date.now() - pending.startedAt : 0;
+        try {
+          if (videoRef.current) newSession.attach(videoRef.current);
+        } catch (e: any) {
+          log(`HOT-SWAP: attach do vídeo falhou: ${e?.message ?? e}`, "err");
+        }
+        sessionRef.current = newSession;
+        connectedRef.current = true;
+        log("HOT-SWAP: troca concluída ✅ (encerrando sessão antiga)", "ok");
+        try {
+          void oldSession.stop();
+        } catch {}
+        swapInProgressRef.current = false;
+        void tryPlay();
+        scheduleHotSwap(); // reagenda o próximo ciclo
+
+        // Suprime a saudação automática do HeyGen na NOVA sessão, fala a "fala ao
+        // reconectar" (se configurada) e, se a troca cortou no meio, retoma de onde parou.
+        void (async () => {
+          for (let i = 0; i < 4; i++) {
+            try {
+              (newSession as any)?.interrupt?.();
+            } catch {}
+            await new Promise((r) => window.setTimeout(r, 250));
+          }
+          const reconnectMsg = (cfgRef.current.reconnectGreeting || "").trim();
+          if (reconnectMsg) {
+            log(`HOT-SWAP: fala ao reconectar: "${reconnectMsg}"`, "ok");
+            await speakOn(newSession, reconnectMsg);
+          }
+          // Retomada: re-fala a parte que faltou da frase cortada (estimativa por
+          // tempo, recuando ~2 palavras pra emendar com naturalidade).
+          if (pending?.text) {
+            const words = pending.text.trim().split(/\s+/).filter(Boolean);
+            const WORDS_PER_SEC = 2.7;
+            let spoken = Math.floor((cutElapsedMs / 1000) * WORDS_PER_SEC) - 2;
+            if (spoken < 0) spoken = 0;
+            const remaining = spoken < words.length ? words.slice(spoken).join(" ") : "";
+            if (remaining) {
+              log(`HOT-SWAP: retomando de onde parou: "${remaining}"`, "ok");
+              await speakOn(newSession, remaining);
+            }
+          }
+        })();
+      };
+      newSession.on(SessionEvent.SESSION_STREAM_READY, promote);
+
+      log("HOT-SWAP: start() da nova sessão…");
+      await newSession.start();
+    } catch (e: any) {
+      log(`HOT-SWAP falhou; mantendo a sessão atual (tenta de novo no próximo ciclo): ${e?.message ?? e}`, "err");
+      swapInProgressRef.current = false;
+      scheduleHotSwap();
+    }
+  }, [fetchToken, log, registerSessionEvents, scheduleHotSwap, tryPlay]);
+
+  useEffect(() => {
+    prewarmSwapRef.current = prewarmAndSwap;
+  }, [prewarmAndSwap]);
+
   // ---- bootstrap ----
   useEffect(() => {
     const cfg = readConfig();
@@ -566,21 +757,7 @@ function MeetAvatar() {
           }
           void tryPlay();
         });
-        session.on(SessionEvent.SESSION_STATE_CHANGED, (st: any) => {
-          if (st === "CONNECTED") {
-            connectedRef.current = true;
-            setStatus("conectado — ouvindo a reunião");
-          }
-          if (st === "DISCONNECTED") connectedRef.current = false;
-        });
-        session.on(AgentEventsEnum.AVATAR_SPEAK_STARTED, () => {
-          isAvatarSpeakingRef.current = true;
-          setSpeaking(true);
-        });
-        session.on(AgentEventsEnum.AVATAR_SPEAK_ENDED, () => {
-          isAvatarSpeakingRef.current = false;
-          setSpeaking(false);
-        });
+        registerSessionEvents(session);
 
         setStatus("conectando sessão…");
         await session.start();
@@ -596,6 +773,10 @@ function MeetAvatar() {
         } else {
           setStatus("conectado — dormindo (diga o nome pra acordar)");
         }
+
+        // Arma o hot-swap: pré-aquece e troca a sessão antes do limite do plano.
+        swapInProgressRef.current = false;
+        scheduleHotSwap();
 
         // Começa a ouvir a reunião antes de falar (não perde transcrição).
         connectWs();
@@ -634,6 +815,10 @@ function MeetAvatar() {
         window.clearTimeout(meetSilenceTimerRef.current);
         meetSilenceTimerRef.current = null;
       }
+      if (hotSwapTimerRef.current !== null) {
+        window.clearTimeout(hotSwapTimerRef.current);
+        hotSwapTimerRef.current = null;
+      }
       try {
         wsRef.current?.close();
       } catch {}
@@ -642,7 +827,7 @@ function MeetAvatar() {
       } catch {}
       sessionRef.current = null;
     };
-  }, [fetchToken, log, tryPlay, speakAndWait]);
+  }, [fetchToken, log, tryPlay, speakAndWait, registerSessionEvents, scheduleHotSwap]);
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-black">

@@ -42,7 +42,7 @@ export const recallCreateBot = createServerFn({ method: "POST" })
     const apiKey = resolveRecallKey(data.apiKey);
     const body: Record<string, unknown> = {
       meeting_url: data.meetingUrl,
-      bot_name: data.botName || "Renante",
+      bot_name: data.botName || "Renan",
       recording_config: {
         transcript: {
           provider: { meeting_captions: {} },

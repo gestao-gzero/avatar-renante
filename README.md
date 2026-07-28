@@ -1,4 +1,4 @@
-# RenAnte Avatar AI — by GZero
+# Renan Avatar AI — by GZero
 
 Avatar AI interativo em Português Brasileiro. O usuário fala via microfone → n8n processa a resposta → o avatar HeyGen fala de volta. Pensado para apresentações, reuniões e entrevistas ao vivo.
 

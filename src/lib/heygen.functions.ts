@@ -164,10 +164,18 @@ export const listAvatars = createServerFn({ method: "POST" })
       /* sem avatares da conta — segue só com públicos */
     }
 
+    // Os públicos são a fonte principal: aqui um erro HTTP precisa VIRAR erro, senão
+    // a tela só mostra "lista vazia" e o motivo real (401/403/429) some.
     let nextUrl: string | null = "https://api.liveavatar.com/v1/avatars/public?page_size=50";
     let pages = 0;
     while (nextUrl && pages < 4) {
       const resp: Response = await fetch(nextUrl, { headers });
+      if (!resp.ok) {
+        const txt = await resp.text().catch(() => "");
+        throw new Error(
+          `HeyGen /avatars/public respondeu ${resp.status} ${resp.statusText}: ${txt.slice(0, 300)}`,
+        );
+      }
       const body: any = await resp.json();
       push(body?.data?.results, false);
       nextUrl = (body?.data?.next as string | null) ?? null;
@@ -186,6 +194,10 @@ export const listVoices = createServerFn({ method: "POST" })
     const r = await fetch("https://api.liveavatar.com/v1/voices?page_size=100", {
       headers: { "X-API-KEY": resolveHeygenKey(data?.apiKey) },
     });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      throw new Error(`HeyGen /voices respondeu ${r.status} ${r.statusText}: ${txt.slice(0, 300)}`);
+    }
     const j = await r.json();
     return ((j?.data?.results ?? []) as any[]).map<VoiceOption>((v) => ({
       id: v.id,

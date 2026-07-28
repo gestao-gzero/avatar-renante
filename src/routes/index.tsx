@@ -24,7 +24,7 @@ import {
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "RenAnte Avatar AI — by GZero" },
+      { title: "Renan Avatar AI — by GZero" },
       {
         name: "description",
         content: "Diagnóstico visível de LiveAvatar, vídeo, microfone e voz",
@@ -38,6 +38,24 @@ const SPEAK_TIMEOUT_MS = 60_000;
 const SETTINGS_KEY = "liveavatar.settings.v1";
 const MODE_KEY = "liveavatar.mode.v1";
 const AUTH_KEY = "liveavatar.auth.v1"; // token de login (senha única) no localStorage
+// Nome do bot na lista de participantes do Google Meet (Camadas 1 e 3).
+// NÃO é a wake-word: acordar o avatar aceita tanto "Renan" quanto o nome antigo
+// "Renante" (ver WAKE_RE/END_RE aqui e em meet.tsx).
+const MEET_BOT_NAME = "Renan";
+// URL pública oficial do avatar. É ELA que o bot do Recall abre pra renderizar o
+// /meet dentro da reunião — se apontar pra um deploy velho, o Meet roda código antigo.
+const AVATAR_BASE_URL_DEFAULT = "https://renante.gravidadezero.ai";
+// Preview do avatar (quadro de vídeo antes de conectar). Ordem de resolução:
+//   1) settings.posterUrl  — preenchido pela API HeyGen ao escolher o avatar
+//   2) POSTER_KEY          — frame capturado do próprio vídeo (botão na UI)
+//   3) /avatar-poster.png  — arquivo estático em public/ (independe de API)
+//   4) tela "avatar desconectado" — se nada acima existir, nunca fica quebrado
+const POSTER_KEY = "liveavatar.poster.v1";
+const AVATAR_POSTER_FALLBACK = "/avatar-poster.png";
+// Hosts de deploys ANTIGOS. Config salva no localStorage tem prioridade sobre o
+// default, então uma URL velha sobreviveria a esta atualização; loadSettings migra
+// qualquer um destes para AVATAR_BASE_URL_DEFAULT automaticamente.
+const LEGACY_AVATAR_HOSTS = ["mic-speak-pal.vercel.app", "mixpeak", "lovableproject.com", "lovable.app"];
 // Entrevistador: usado no DEFAULT_SETTINGS (campo entrevistadorSilenceSec).
 const ENTREVISTADOR_SILENCE_SEC_DEFAULT = 1;
 // Envio GUIADO PELO MUTE: o operador muta o microfone pra sinalizar "terminei de
@@ -117,27 +135,27 @@ const DEFAULT_SETTINGS: Settings = {
   language: "pt",
   meetLink: "",
   recallApiKey: "",
-  avatarBaseUrl: "https://mic-speak-pal.vercel.app",
+  avatarBaseUrl: AVATAR_BASE_URL_DEFAULT,
   posterUrl: "",
   captionsEnabled: true,
   meetLaunchMode: "reuniao",
   meetConfigs: {
     conversa: {
-      greeting: "Olá! Eu sou o Renante, da Gravidade Zero. Podem falar comigo à vontade.",
+      greeting: "Olá! Eu sou o Renan, da Gravidade Zero. Podem falar comigo à vontade.",
       transitionGreeting: "Certo, seguindo no modo conversa.",
       reconnectGreeting: "Eita, caiu a conexão — pode continuar de onde estava.",
       behavior: "always",
       bargeIn: true,
     },
     reuniao: {
-      greeting: "Olá pessoal! Eu sou o Renante, da Gravidade Zero. É só me chamar pelo nome quando precisarem.",
+      greeting: "Olá pessoal! Eu sou o Renan, da Gravidade Zero. É só me chamar pelo nome quando precisarem.",
       transitionGreeting: "Beleza, entrando no modo reunião.",
       reconnectGreeting: "Eita, caiu a conexão — pode continuar de onde estava.",
       behavior: "wake",
       bargeIn: true,
     },
     entrevistador: {
-      greeting: "Oi, tudo bem? Eu sou o Renante, uma mistura do conciente do Renan e Dante e vou conduzir essa conversa. Pra gente começar, qual é o seu nome?",
+      greeting: "Oi, tudo bem? Eu sou o Renan e vou conduzir essa conversa. Pra gente começar, qual é o seu nome?",
       transitionGreeting: "Pronto, vamos para a entrevista.",
       reconnectGreeting: "Eita, caiu a conexão — pode continuar de onde estava.",
       behavior: "always",
@@ -159,6 +177,12 @@ function loadSettings(): Settings {
     if (!raw) return DEFAULT_SETTINGS;
     const parsed = JSON.parse(raw);
     const merged: Settings = { ...DEFAULT_SETTINGS, ...parsed };
+    // MIGRAÇÃO: troca URL pública de deploy antigo pela oficial. Sem isto, um browser
+    // que já usou o app continuaria mandando o bot do Recall abrir o deploy velho.
+    const base = (merged.avatarBaseUrl || "").toLowerCase();
+    if (!base || LEGACY_AVATAR_HOSTS.some((h) => base.includes(h))) {
+      merged.avatarBaseUrl = AVATAR_BASE_URL_DEFAULT;
+    }
     // Garante que meetConfigs tenha os 3 modos (compat com configs antigas).
     const pc = parsed?.meetConfigs ?? {};
     merged.meetConfigs = {
@@ -205,6 +229,10 @@ function buildMeetUrl(s: Settings, debug: boolean, authToken = ""): string {
     sil: String(s.meetSilenceSec ?? 0.5),
     debug: debug ? "1" : "0",
     auth: authToken, // token de login: o /meet (bot) precisa dele pra chamar getSessionToken
+    // Hot-swap DENTRO do Meet (Camada 3): mesmo intervalo/fala de reconexão do
+    // console (Camada 1/2). Sem isso o /meet sobe e nunca troca de sessão sozinho.
+    hs: String(s.hotSwapAfterSec || HOT_SWAP_AFTER_SEC_DEFAULT),
+    rg: cfg.reconnectGreeting,
   });
   return `${base}/meet?${qs.toString()}`;
 }
@@ -384,6 +412,24 @@ function GZeroWordmark({ className }: { className?: string }) {
   return (
     <span className={`font-extrabold leading-none tracking-tight ${className ?? "text-3xl"}`}>
       <span className="text-pink-500">G</span>Zero
+    </span>
+  );
+}
+
+// Logo OFICIAL da GZero na tela de login. A arte é um JPEG (sem transparência),
+// então vai dentro de uma "pílula" branca pra não brigar com o fundo escuro da tela.
+// Se a imagem não carregar, cai na wordmark de texto — o login nunca fica sem marca.
+function LoginLogo() {
+  const [failed, setFailed] = useState(false);
+  if (failed) return <GZeroWordmark className="text-2xl" />;
+  return (
+    <span className="inline-flex items-center rounded-xl bg-white px-4 py-2.5">
+      <img
+        src="/GZero%20-%20Logo%20Rosa%20-%2014fev22.jpeg"
+        alt="GZero"
+        onError={() => setFailed(true)}
+        className="h-9 w-auto select-none object-contain"
+      />
     </span>
   );
 }
@@ -600,6 +646,10 @@ function Index() {
   const [voiceOptions, setVoiceOptions] = useState<VoiceOption[]>([]);
   const [apiListLoading, setApiListLoading] = useState(false);
   const [apiListError, setApiListError] = useState<string | null>(null);
+  // Preview do avatar capturado do próprio vídeo (data URL). Fica FORA de `settings`
+  // de propósito: é um valor grande e não pode arriscar estourar a cota do
+  // localStorage e derrubar o resto da configuração junto.
+  const [capturedPoster, setCapturedPoster] = useState("");
   // Telemetria real da sessão: relógio da chamada, tick por segundo e status do n8n.
   const [callStartTs, setCallStartTs] = useState<number | null>(null);
   const [nowTs, setNowTs] = useState(0);
@@ -619,6 +669,11 @@ function Index() {
     setMode(m);
     settingsRef.current = s;
     modeRef.current = m;
+    try {
+      setCapturedPoster(window.localStorage.getItem(POSTER_KEY) || "");
+    } catch {
+      /* sem poster capturado — cai no arquivo estático */
+    }
   }, []);
 
   useEffect(() => {
@@ -659,12 +714,11 @@ function Index() {
   }, [settingsDraft, settingsOpen, saveSettings]);
 
   // Puxa avatares (da conta + públicos) e vozes da API HeyGen pra preencher os selects.
+  // A chave NÃO precisa ser digitada aqui: listAvatars/listVoices são server functions
+  // e caem em process.env.HEYGEN_API_KEY quando apiKey vem vazia — a chave fica só no
+  // servidor e nunca chega no navegador. O campo da UI é apenas um override opcional.
   const loadAvatarVoiceLists = useCallback(async () => {
-    const key = settingsDraft.apiKey.trim();
-    if (!key) {
-      setApiListError("Preencha a API Key primeiro (campo abaixo).");
-      return;
-    }
+    const key = (settingsRef.current.apiKey || settingsDraft.apiKey || "").trim();
     setApiListLoading(true);
     setApiListError(null);
     try {
@@ -674,7 +728,11 @@ function Index() {
       ]);
       setAvatarOptions(av);
       setVoiceOptions(vo);
-      if (!av.length && !vo.length) setApiListError("A API não retornou avatares/vozes.");
+      if (!av.length && !vo.length) {
+        setApiListError(
+          "A API respondeu, mas não veio nenhum avatar nem voz. Confira se a HEYGEN_API_KEY do servidor tem acesso a esses endpoints.",
+        );
+      }
     } catch (e: any) {
       setApiListError(e?.message ?? String(e));
     } finally {
@@ -755,17 +813,23 @@ function Index() {
   // ── bento free-form layout ──
   type PanelRect = { x: number; y: number; w: number; h: number };
   const BENTO_KEY = "avatarConsole.freeform.v1";
+  // Layout padrão = o layout real do Renan, capturado do localStorage
+  // (`avatarConsole.freeform.v1`) do Mac dele em 28/07 via
+  // `copy(localStorage.getItem('avatarConsole.freeform.v1'))` e colado aqui
+  // literalmente — não é mais uma estimativa minha. Largura máxima 1460px
+  // (cabe no viewport dele, ~1470px lógicos). Pra ajustar no futuro: arraste
+  // os painéis do jeito que quiser e rode `__dumpLayout()` no console.
   const DEFAULT_RECTS: Record<string, PanelRect> = {
-    avatar:    { x: 1400, y: 20,   w: 440,  h: 720 },
-    status:    { x: 20,   y: 20,   w: 300,  h: 380 },
-    ready:     { x: 20,   y: 420,  w: 320,  h: 280 },
-    hotswap:   { x: 360,  y: 480,  w: 260,  h: 160 },
-    voice:     { x: 340,  y: 20,   w: 280,  h: 380 },
-    log:       { x: 640,  y: 20,   w: 720,  h: 540 },
-    modos:     { x: 20,   y: 1180, w: 1820, h: 700 },
-    avatarvoz: { x: 640,  y: 580,  w: 620,  h: 540 },
-    webhooks:  { x: 20,   y: 720,  w: 600,  h: 400 },
-    recall:    { x: 1280, y: 760,  w: 540,  h: 400 },
+    status:    { x: 20,   y: 20,   w: 240, h: 380 },
+    voice:     { x: 280,  y: 20,   w: 240, h: 380 },
+    avatar:    { x: 1060, y: 20,   w: 400, h: 680 },
+    ready:     { x: 20,   y: 420,  w: 260, h: 280 },
+    hotswap:   { x: 300,  y: 420,  w: 220, h: 200 },
+    log:       { x: 540,  y: 20,   w: 500, h: 540 },
+    modos:     { x: 20,   y: 1140, w: 1440, h: 700 },
+    avatarvoz: { x: 540,  y: 580,  w: 500, h: 540 },
+    webhooks:  { x: 20,   y: 720,  w: 460, h: 400 },
+    recall:    { x: 1060, y: 720,  w: 400, h: 400 },
   };
   const [bentoReady, setBentoReady] = useState(false);
   const [bentoRects, setBentoRects] = useState<Record<string, PanelRect>>({});
@@ -900,6 +964,38 @@ function Index() {
       setStatus("video", "err", `Stream recebido, mas play() falhou/bloqueou: ${formatted}`);
     }
   }, [log, logError, setStatus]);
+
+  // Captura o frame atual do avatar (canvas → data URL) e guarda no localStorage.
+  // Fica separado de `settings` de propósito: um frame em base64 pode passar de 100KB
+  // e não deve arriscar estourar a cota do localStorage (que derrubaria toda a config).
+  const captureAvatarPoster = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) {
+      log("Captura de poster: vídeo ainda sem frame disponível", "err");
+      return;
+    }
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("contexto 2d indisponível");
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL("image/png");
+      window.localStorage.setItem(POSTER_KEY, dataUrl);
+      setCapturedPoster(dataUrl);
+      log("Poster capturado do frame atual e salvo", "ok");
+    } catch (e) {
+      logError("Captura de poster falhou", e);
+    }
+  }, [log, logError]);
+
+  const clearCapturedPoster = useCallback(() => {
+    try {
+      window.localStorage.removeItem(POSTER_KEY);
+    } catch {}
+    setCapturedPoster("");
+  }, []);
 
   const requestMicrophonePermission = useCallback(async () => {
     log("getUserMedia({ audio: { EC/NS/AGC: true } }): solicitando permissão");
@@ -1039,7 +1135,7 @@ function Index() {
       setBootChecks((prev) => ({ ...prev, [id]: ph }));
 
     void (async () => {
-      log("Inicializando console RenAnte Avatar AI…");
+      log("Inicializando console Renan Avatar AI…");
       await sleep(450);
       if (cancelled) return;
       log("Carregando configurações locais (localStorage)…");
@@ -2077,7 +2173,7 @@ function Index() {
   );
 
   // Núcleo de envio: aceita override de modo e flag `responder` (Reunião).
-  // Aplica REGRA DO VAZIO: se renante output vazio, não fala e não chama filler.
+  // Aplica REGRA DO VAZIO: se a resposta do Renan vier vazia, não fala e não chama filler.
   const handleSend = useCallback(
     async (rawText?: string, opts?: { responder?: boolean }) => {
       const question = (rawText ?? text).trim();
@@ -2106,7 +2202,7 @@ function Index() {
       setLiveTranscript("");
       const s = settingsRef.current;
       const currentMode = modeRef.current;
-      const renanteUrl =
+      const renanUrl =
         currentMode === "conversa"
           ? s.webhookConversa
           : currentMode === "reuniao"
@@ -2136,15 +2232,15 @@ function Index() {
         typeof performance !== "undefined" ? performance.now() : Date.now();
 
       setN8nStatus({ state: "waiting", detail: "enviando…" });
-      const renanteP = fetch(renanteUrl, {
+      const renanP = fetch(renanUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       })
         .then(async (response) => {
           const txt = await response.text();
-          log(`Webhook Renante (${currentMode}): HTTP ${response.status} ${response.statusText}\n${txt}`);
-          if (!response.ok) throw new Error(`Renante HTTP ${response.status}: ${txt}`);
+          log(`Webhook Renan (${currentMode}): HTTP ${response.status} ${response.statusText}\n${txt}`);
+          if (!response.ok) throw new Error(`Renan HTTP ${response.status}: ${txt}`);
           setN8nStatus({ state: "ok", detail: `respondeu · HTTP ${response.status}` });
           try {
             return JSON.parse(txt);
@@ -2154,7 +2250,7 @@ function Index() {
         })
         .catch((error) => {
           setN8nStatus({ state: "err", detail: "falhou" });
-          logError("erro Renante", error);
+          logError("erro Renan", error);
           return { output: "" };
         });
 
@@ -2193,7 +2289,7 @@ function Index() {
 
       // Se não vai falar (Reunião dormindo), só espera o webhook pra logar e sai.
       if (!willSpeak) {
-        const j: any = await renanteP;
+        const j: any = await renanP;
         log(`(reuniao DORMINDO) resposta ignorada: ${safeStringify(j)}`);
         return;
       }
@@ -2222,12 +2318,12 @@ function Index() {
       }
 
       // Aguarda agente. Se vazio, deixa o filler terminar e sai (sem resposta).
-      const renanteJson: any = await renanteP;
-      const renanteText = (renanteJson?.output ?? renanteJson?.text ?? renanteJson?.message ?? "")
+      const renanJson: any = await renanP;
+      const renanText = (renanJson?.output ?? renanJson?.text ?? renanJson?.message ?? "")
         .toString()
         .trim();
-      if (!renanteText) {
-        log(`output vazio — sem resposta do agente. Payload=${safeStringify(renanteJson)}`);
+      if (!renanText) {
+        log(`output vazio — sem resposta do agente. Payload=${safeStringify(renanJson)}`);
         if (fillerSpeakP) await fillerSpeakP.catch(() => {});
         return;
       }
@@ -2235,9 +2331,9 @@ function Index() {
       // Espera o filler terminar (speak_ended) antes de falar a resposta.
       if (fillerSpeakP) await fillerSpeakP.catch(() => {});
 
-      log(`resposta Renante: "${renanteText}"`, "ok");
+      log(`resposta Renan: "${renanText}"`, "ok");
       try {
-        await speakAndWait(renanteText);
+        await speakAndWait(renanText);
       } catch (error) {
         logError("erro speak_text resposta", error);
       }
@@ -2381,9 +2477,9 @@ function Index() {
     setBotJoining(true);
     setBotStatus("entrando…");
     avatarInMeetRef.current = false; // Camada 1/2: só escuta; fala sai pelo avatar local
-    log(`[CAMADA 1] Recall POST /bot/ meeting_url=${s.meetLink} bot_name=Renante`);
+    log(`[CAMADA 1] Recall POST /bot/ meeting_url=${s.meetLink} bot_name=${MEET_BOT_NAME}`);
     try {
-      const r: any = await callCreateBot({ data: { apiKey: s.recallApiKey, meetingUrl: s.meetLink, botName: "Renante", authToken: authTokenRef.current } });
+      const r: any = await callCreateBot({ data: { apiKey: s.recallApiKey, meetingUrl: s.meetLink, botName: MEET_BOT_NAME, authToken: authTokenRef.current } });
       log(`[CAMADA 1] Recall resposta HTTP ${r.status}\n${r.body}`, r.ok ? "ok" : "err");
       if (!r.ok || !r.bot?.id) { setBotStatus(`erro ${r.status}`); return; }
       const id = String(r.bot.id);
@@ -2409,7 +2505,7 @@ function Index() {
     const s = settingsRef.current;
     // recallApiKey pode estar vazia: o servidor usa RECALL_API_KEY (.env / Vercel).
     if (!s.meetLink) { log("Recall: Link do Google Meet vazio (Configurações)", "err"); return; }
-    if (!s.avatarBaseUrl) { log('Camada 3: "URL pública do avatar" vazia. Publique no Lovable e cole a URL base em Configurações.', "err"); return; }
+    if (!s.avatarBaseUrl) { log(`Camada 3: "URL pública do avatar" vazia. Use ${AVATAR_BASE_URL_DEFAULT} em Configurações.`, "err"); return; }
     if (botIdRef.current) { log(`Recall: bot já ativo (${botIdRef.current})`, "info"); return; }
     // Garante que o Meet começa com escuta ativa (reset de sessão anterior).
     void callSetMeetListenPaused({ data: { paused: false } });
@@ -2421,7 +2517,7 @@ function Index() {
     log(`[CAMADA 3] Recall POST /bot/ (modo=${launchMode}) com output_media → ${s.avatarBaseUrl.replace(/\/+$/, "")}/meet`);
     try {
       const r: any = await callCreateBot({
-        data: { apiKey: s.recallApiKey, meetingUrl: s.meetLink, botName: "Renante", outputMediaUrl, authToken: authTokenRef.current },
+        data: { apiKey: s.recallApiKey, meetingUrl: s.meetLink, botName: MEET_BOT_NAME, outputMediaUrl, authToken: authTokenRef.current },
       });
       log(`[CAMADA 3] Recall resposta HTTP ${r.status}\n${r.body}`, r.ok ? "ok" : "err");
       if (!r.ok || !r.bot?.id) {
@@ -2532,7 +2628,7 @@ function Index() {
               const text = words.map((w: any) => w?.text ?? "").join(" ").trim()
                 || (seg?.text ?? "").toString().trim();
               if (!text) continue;
-              if (speaker && /renante/i.test(speaker)) {
+              if (speaker && /renante|renan/i.test(speaker)) {
                 log(`[CAMADA 2] (ignora própria fala) ${speaker}: ${text}`);
                 continue;
               }
@@ -2801,7 +2897,7 @@ function Index() {
         id: "reuniao-chamado",
         title: "Reunião (chamado, responder=true)",
         url: s.webhookReuniao,
-        body: { question: "Renante, responda apenas OK", sessionId: "diagnostico-reuniao", responder: true },
+        body: { question: "Renan, responda apenas OK", sessionId: "diagnostico-reuniao", responder: true },
         validate: (p) => {
           const o = (p?.output ?? "").toString().trim();
           return { ok: o.length > 0, reason: o ? `output="${o}"` : "output vazio (esperado texto)" };
@@ -2885,7 +2981,7 @@ function Index() {
     const failed = results.filter((r) => r.status === "fail");
     const now = new Date();
     const header = [
-      `# Diagnóstico HeyGen LiveAvatar — Renante`,
+      `# Diagnóstico HeyGen LiveAvatar — Renan`,
       ``,
       `**Data:** ${now.toLocaleString()}`,
       `**Resumo:** ${okCount} de ${total} testes OK`,
@@ -3035,6 +3131,30 @@ function Index() {
     }
     document.documentElement.style.setProperty("--cell", bentoCell + "px");
   }, [bentoReady, bentoRects, bentoCell, bentoSnap, isMobile]);
+
+  // ── bento: comando de console p/ extrair as posições atuais dos painéis ──
+  // Uso: arraste/redimensione os painéis do jeito que quer deixar como PADRÃO,
+  // abra o console do navegador e rode `__dumpLayout()`. Ele imprime (e tenta
+  // copiar pro clipboard) um objeto pronto pra colar em DEFAULT_RECTS
+  // (const DEFAULT_RECTS, logo no início deste componente).
+  useEffect(() => {
+    (window as any).__dumpLayout = () => {
+      const order = ["avatar", "status", "ready", "hotswap", "voice", "log", "modos", "avatarvoz", "webhooks", "recall"];
+      const keys = Object.keys(bentoRects).sort((a, b) => order.indexOf(a) - order.indexOf(b));
+      const lines = keys.map((k) => {
+        const r = bentoRects[k];
+        return `  ${k}: { x: ${r.x}, y: ${r.y}, w: ${r.w}, h: ${r.h} },`;
+      });
+      const text = `const DEFAULT_RECTS: Record<string, PanelRect> = {\n${lines.join("\n")}\n};`;
+      console.log(text);
+      navigator.clipboard?.writeText(text).then(
+        () => console.log("[__dumpLayout] copiado pro clipboard ✅"),
+        () => console.log("[__dumpLayout] não deu pra copiar automaticamente — copie o texto acima manualmente"),
+      );
+      return text;
+    };
+    return () => { delete (window as any).__dumpLayout; };
+  }, [bentoRects]);
 
   // ── bento: close layout popover on outside click ──
   useEffect(() => {
@@ -3233,11 +3353,11 @@ function Index() {
           }}
           className="w-full max-w-sm rounded-2xl border border-white/12 bg-[rgba(17,20,25,.8)] p-6 shadow-[0_8px_40px_rgba(0,0,0,.5)] backdrop-blur-md"
         >
-          <div className="mb-1 text-2xl font-extrabold tracking-tight">
-            <span className="text-pink-500">G</span>Zero
+          <div className="mb-3 flex justify-center">
+            <LoginLogo />
           </div>
-          <div className="mb-5 text-sm text-white/60">
-            RenAnte Avatar AI · acesso restrito
+          <div className="mb-5 text-center text-sm text-white/60">
+            Renan Avatar AI · acesso restrito
           </div>
           <label className="mb-1 block text-xs font-medium text-white/70">Senha de acesso</label>
           <input
@@ -3295,7 +3415,7 @@ function Index() {
         <div className="brand">
           <img src="/GZero%20-%20Logo%20Rosa%20-%2014fev22.jpeg" alt="GZero" style={{ height: 30, width: "auto", objectFit: "contain", flex: "0 0 auto" }} />
           <div>
-            <h1>RenAnte <b>Avatar</b> AI</h1>
+            <h1>Renan <b>Avatar</b> AI</h1>
             <span className="by">console de diagnóstico · by GZero</span>
           </div>
         </div>
@@ -3416,7 +3536,7 @@ function Index() {
           {/* ── vídeo + overlay de sessão ── */}
           <div
             className="avbox"
-            style={{ flex: "0 0 auto", aspectRatio: "16/9", borderRadius: 0, position: "relative", background: connected ? "#000" : "var(--panel-2)" }}
+            style={{ flex: "0 0 auto", aspectRatio: "16/9", borderRadius: 0, position: "relative", background: "#000" }}
           >
             <div className="grid-ov" />
             {connected && <div className="scan" />}
@@ -3426,13 +3546,15 @@ function Index() {
               autoPlay
               playsInline
               muted={false}
-              poster={settings.posterUrl || undefined}
+              poster={settings.posterUrl || capturedPoster || AVATAR_POSTER_FALLBACK}
               style={{
                 position: "absolute", top: 0, right: 0, bottom: 0, left: 0,
                 width: "100%", height: "100%",
-                objectFit: "cover", display: connected ? "block" : "none",
+                objectFit: "cover", display: "block",
               }}
             />
+            {/* Antes de conectar, o <video> já mostra o poster configurado (ou o
+                placeholder estático) — este overlay só soma o texto de status por cima. */}
             {!connected && (
               <div className="scrn">
                 <div className="ce">🎭</div>
@@ -4167,10 +4289,29 @@ function Index() {
                 <input className="inp" value={settings.language}
                   onChange={(e) => updateSetting("language", e.target.value)} spellCheck={false} placeholder="pt" />
               </div>
-              <div className="field">
-                <label>Poster do avatar <span className="hint">url</span></label>
+              <div className="field wide">
+                <label>Poster do avatar <span className="hint">url — vazio usa o frame capturado ou o padrão estático</span></label>
                 <input className="inp" value={settings.posterUrl}
                   onChange={(e) => updateSetting("posterUrl", e.target.value)} spellCheck={false} placeholder="https://…/preview.png" />
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+                  <button
+                    type="button"
+                    className="btn sm"
+                    disabled={!connected}
+                    title={connected ? "Captura o frame atual do avatar conectado como poster" : "Conecte o avatar primeiro"}
+                    onClick={captureAvatarPoster}
+                  >
+                    📸 Capturar frame atual como poster
+                  </button>
+                  {capturedPoster && (
+                    <button type="button" className="btn sm" onClick={clearCapturedPoster}>
+                      Limpar frame capturado
+                    </button>
+                  )}
+                </div>
+                <span className="hint" style={{ display: "block", marginTop: 4 }}>
+                  Ordem: URL acima → frame capturado aqui → <code>/avatar-poster.png</code> (placeholder estático em <code>public/</code>).
+                </span>
               </div>
               <div className="field wide">
                 <label>Deepgram API Key <span className="hint">opcional — sobrescreve a do servidor</span></label>
@@ -4235,7 +4376,7 @@ function Index() {
               <div className="field wide">
                 <label>URL pública do avatar <span className="hint">base</span></label>
                 <input className="inp url" value={settings.avatarBaseUrl}
-                  onChange={(e) => updateSetting("avatarBaseUrl", e.target.value)} spellCheck={false} placeholder="https://seu-app.vercel.app" />
+                  onChange={(e) => updateSetting("avatarBaseUrl", e.target.value)} spellCheck={false} placeholder={AVATAR_BASE_URL_DEFAULT} />
               </div>
             </div>
             <div className="cfgstatus">
@@ -4283,7 +4424,7 @@ function Index() {
               <span className="flex items-baseline gap-2 text-sm">
                 <img src="/GZero%20-%20Logo%20Rosa%20-%2014fev22.jpeg" alt="GZero" className="h-8 w-auto object-contain" />
                 <span className="text-white/40">·</span>
-                <span className="font-semibold">Renante</span>
+                <span className="font-semibold">Renan</span>
                 <span className="text-white/40">·</span>
                 <span className="text-white/80">{modeLabel}</span>
               </span>
@@ -4413,8 +4554,8 @@ function Index() {
                   </span>
                 </div>
                 <div className="space-y-1 text-[10px] leading-snug text-white/60">
-                  <div><span className="text-emerald-300/90">Ativar:</span> "oi Renante" / só o nome</div>
-                  <div><span className="text-white/50">Desativar:</span> "tchau Renante" / "pode parar"</div>
+                  <div><span className="text-emerald-300/90">Ativar:</span> "oi Renan" / só o nome</div>
+                  <div><span className="text-white/50">Desativar:</span> "tchau Renan" / "pode parar"</div>
                 </div>
               </div>
             )}
@@ -5023,7 +5164,7 @@ function Index() {
                     Modo diagnóstico no Meet (mostra status na câmera do bot)
                   </label>
                   <span className="block text-xs text-muted-foreground">
-                    Use pra depurar: a câmera do Renante mostra se o WebSocket de transcrição
+                    Use pra depurar: a câmera do Renan mostra se o WebSocket de transcrição
                     conectou e o que está chegando. Desligue na demo real.
                   </span>
                 </div>
@@ -5064,7 +5205,7 @@ function Index() {
                     onChange={(e) =>
                       setSettingsDraft((d) => ({ ...d, avatarBaseUrl: e.target.value }))
                     }
-                    placeholder="https://seu-app.lovableproject.com"
+                    placeholder={AVATAR_BASE_URL_DEFAULT}
                     className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm"
                   />
                   <span className="mt-1 block text-xs text-muted-foreground">
@@ -5099,7 +5240,7 @@ function Index() {
                     type="button"
                     onClick={() => void joinMeetingWithAvatar()}
                     disabled={botJoining || !!botId}
-                    title="Coloca o avatar Renante como participante (câmera + voz) dentro do Meet"
+                    title="Coloca o avatar do Renan como participante (câmera + voz) dentro do Meet"
                     className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
                   >
                     {botJoining ? "Entrando…" : botId ? "Avatar na reunião" : `Entrar na reunião (${settings.meetLaunchMode})`}

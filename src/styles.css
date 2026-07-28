@@ -348,14 +348,23 @@
   overflow: hidden; display: flex; flex-direction: column; min-height: 180px;
 }
 .cr .avbox .scrn {
-  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 9px; color: #8b95a3;
+  /* Sobrepõe o <video> (que fica sempre visível, mostrando o poster/preview
+     configurado) em vez de ocupar o box inteiro — assim o preview aparece por
+     trás do texto de status em vez de ser escondido por um bloco opaco. */
+  position: absolute; inset: 0; z-index: 2;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 9px; color: #e4e7eb; text-align: center;
+  background: linear-gradient(180deg, rgba(10,12,15,.35) 0%, rgba(10,12,15,.55) 100%);
 }
 .cr .avbox .scrn .ce {
-  width: 46px; height: 46px; border: 2px solid #515c6b; border-radius: 11px;
-  display: grid; place-items: center; color: #6b7686; font-size: 20px;
+  width: 46px; height: 46px; border: 2px solid rgba(255,255,255,.4); border-radius: 11px;
+  display: grid; place-items: center; color: #e4e7eb; font-size: 20px;
+  background: rgba(0,0,0,.35);
 }
-.cr .avbox .scrn .st { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: #7c8694; }
+.cr .avbox .scrn .st {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+  color: #e4e7eb; background: rgba(0,0,0,.4); border-radius: 5px; padding: 3px 9px;
+}
 .cr .avbox .spin {
   width: 13px; height: 13px; border: 2px solid #3b434f; border-top-color: #cf7a1f;
   border-radius: 50%; animation: cr-spin calc(.9s * var(--motion)) linear infinite;
