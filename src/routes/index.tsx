@@ -3576,17 +3576,11 @@ function Index() {
               }}
             />
             {/* Antes de conectar, o <video> já mostra o poster configurado (ou o
-                placeholder estático) — este overlay só soma o texto de status por cima. */}
+                placeholder estático) — este badge discreto só soma o status por cima. */}
             {!connected && (
               <div className="scrn">
-                <div className="ce">🎭</div>
-                <div className="st">{starting ? "conectando…" : "avatar desconectado"}</div>
-                {starting && (
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <span className="spin" />
-                    <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "#7c8694" }}>aguardando sessão…</span>
-                  </div>
-                )}
+                <span className={`dot${starting ? " wait" : ""}`} />
+                <span className="txt">{starting ? "conectando…" : "desconectado"}</span>
               </div>
             )}
             {/* ── overlay quando conectado ── */}

@@ -348,28 +348,21 @@
   overflow: hidden; display: flex; flex-direction: column; min-height: 180px;
 }
 .cr .avbox .scrn {
-  /* Sobrepõe o <video> (que fica sempre visível, mostrando o poster/preview
-     configurado) em vez de ocupar o box inteiro — assim o preview aparece por
-     trás do texto de status em vez de ser escondido por um bloco opaco. */
-  position: absolute; inset: 0; z-index: 2;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 9px; color: #e4e7eb; text-align: center;
-  background: linear-gradient(180deg, rgba(10,12,15,.35) 0%, rgba(10,12,15,.55) 100%);
+  /* Badge discreto no canto — o <video> fica sempre visível por baixo
+     (mostrando o poster/preview configurado); isto só soma o status, sem
+     cobrir a imagem nem competir visualmente com ela. */
+  position: absolute; left: 10px; bottom: 10px; z-index: 2; pointer-events: none;
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .02em;
+  color: rgba(255,255,255,.7); background: rgba(0,0,0,.4);
+  border-radius: 20px; padding: 4px 9px;
 }
-.cr .avbox .scrn .ce {
-  width: 46px; height: 46px; border: 2px solid rgba(255,255,255,.4); border-radius: 11px;
-  display: grid; place-items: center; color: #e4e7eb; font-size: 20px;
-  background: rgba(0,0,0,.35);
+.cr .avbox .scrn .dot {
+  width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,.4); flex: 0 0 auto;
 }
-.cr .avbox .scrn .st {
-  font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
-  color: #e4e7eb; background: rgba(0,0,0,.4); border-radius: 5px; padding: 3px 9px;
+.cr .avbox .scrn .dot.wait {
+  background: #cf7a1f; animation: cr-pulse calc(1.6s * var(--motion)) ease-out infinite;
 }
-.cr .avbox .spin {
-  width: 13px; height: 13px; border: 2px solid #3b434f; border-top-color: #cf7a1f;
-  border-radius: 50%; animation: cr-spin calc(.9s * var(--motion)) linear infinite;
-}
-@keyframes cr-spin { to { transform: rotate(360deg); } }
 .cr .avbox .rec {
   position: absolute; top: 9px; left: 9px; display: inline-flex; align-items: center; gap: 5px;
   font-family: var(--mono); font-size: 9.5px; font-weight: 600; letter-spacing: .06em; color: #cdd5df;
