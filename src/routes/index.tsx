@@ -733,12 +733,34 @@ function Index() {
           "A API respondeu, mas não veio nenhum avatar nem voz. Confira se a HEYGEN_API_KEY do servidor tem acesso a esses endpoints.",
         );
       }
+      // Preenche o preview automaticamente com a foto REAL do avatar já
+      // configurado (ex.: o avatar do Renan) — sem isso, a foto só aparecia se
+      // alguém reselecionasse manualmente o mesmo avatar no dropdown. Só
+      // preenche se ainda não houver poster configurado, pra não sobrescrever
+      // uma URL manual ou um frame já capturado (ver captureAvatarPoster).
+      if (!settingsRef.current.posterUrl) {
+        const current = av.find((o) => o.id === settingsRef.current.avatarId);
+        if (current?.previewUrl) updateSetting("posterUrl", current.previewUrl);
+      }
     } catch (e: any) {
       setApiListError(e?.message ?? String(e));
     } finally {
       setApiListLoading(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [callListAvatars, callListVoices, settingsDraft.apiKey]);
+
+  // Carrega a lista da API automaticamente ao abrir o app (não só quando
+  // alguém clica em "Carregar avatares e vozes" nas Configurações) — assim o
+  // preview já mostra o avatar de verdade assim que a tela abre. Espera o
+  // login resolver (se estiver ligado) pra não bater na API antes da hora.
+  const autoLoadedListsRef = useRef(false);
+  useEffect(() => {
+    if (autoLoadedListsRef.current) return;
+    if (!authReady || (authRequired && !authed)) return;
+    autoLoadedListsRef.current = true;
+    void loadAvatarVoiceLists();
+  }, [authReady, authRequired, authed, loadAvatarVoiceLists]);
 
   // Define o motor de transcrição (Web Speech ou Deepgram) e persiste.
   const setSttEngine = useCallback((engine: "webspeech" | "deepgram") => {

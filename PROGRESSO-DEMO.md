@@ -170,10 +170,24 @@ esse é o próximo passo, com você acompanhando pelo `PLANO-DE-TESTES.md`.**
   print). Troquei pelo fundo neutro atual; quem mostra status agora é só o
   overlay ao vivo, sem duplicar mensagem.
 - Ordem de resolução do preview (vídeo antes de conectar):
-  1. `posterUrl` configurado (preenchido automaticamente ao escolher um
-     avatar na lista da API)
+  1. `posterUrl` configurado (preenchido automaticamente, ver "carregamento
+     automático" abaixo, ou ao reselecionar um avatar manualmente na lista)
   2. Frame capturado manualmente (novo botão, ver abaixo)
   3. `/avatar-poster.png` (o placeholder acima) — nunca fica com tela quebrada
+- **Carregamento automático (rodada 4)**: antes, a lista da API só carregava
+  se alguém clicasse em "Carregar avatares e vozes" nas Configurações — e
+  mesmo carregando, a foto do avatar já configurado (ex.: "Renan") só entrava
+  no preview se a pessoa reselecionasse ele manualmente no dropdown (o
+  `onChange` é o único lugar que preenchia `posterUrl`). Agora:
+  1. A lista carrega **sozinha assim que o app abre** (depois do login
+     resolver, se estiver ligado) — não precisa mais abrir Configurações.
+  2. Ao carregar, se o avatar já configurado (`settings.avatarId`) for
+     encontrado na lista E não houver `posterUrl` configurado ainda, o preview
+     é preenchido automaticamente com a foto real da API.
+  3. Só preenche se `posterUrl` estiver vazio — não sobrescreve uma URL
+     manual nem um frame já capturado.
+  (`loadAvatarVoiceLists` e o novo efeito logo abaixo dela, em
+  `src/routes/index.tsx`.)
 - **Novo**: botão "📸 Capturar frame atual como poster" no painel Avatar & Voz
   ([`src/routes/index.tsx:4300`](src/routes/index.tsx#L4300)) — com o avatar
   conectado, captura o frame atual do vídeo (canvas → PNG) e salva no
