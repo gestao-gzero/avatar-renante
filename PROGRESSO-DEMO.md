@@ -5,8 +5,10 @@ de tudo que foi feito, o que falta, e o que depende de você. O roteiro de
 validação está em `PLANO-DE-TESTES.md` (ainda não rodei nada — só código).
 
 **Status geral: código pronto para os 10 itens pedidos + ajustes da rodada 2
-(senha de login, rename Renan, preview antes de conectar). Nada foi testado na
-prática ainda e nada foi commitado/enviado ao GitHub — isso é o próximo passo.**
+(senha de login, rename Renan, preview antes de conectar, layout exato do
+Mac). Commitado e enviado ao GitHub (`ec9b47c`, branch `main`) — o deploy
+automático deve estar rodando agora. Nada foi testado na prática ainda —
+esse é o próximo passo, com você acompanhando pelo `PLANO-DE-TESTES.md`.**
 
 ---
 
@@ -159,9 +161,14 @@ prática ainda e nada foi commitado/enviado ao GitHub — isso é o próximo pas
   clicar em "Carregar avatares e vozes").
 
 ### ✅ 10. Preview do avatar (PNG estático de fallback)
-- Criei `public/avatar-poster.png` — um placeholder escuro com a marca GZero
-  ("Avatar e Renan · aguardando conexão do avatar"), gerado programaticamente
-  (não é uma captura real do avatar).
+- Criei `public/avatar-poster.png` — um fundo escuro neutro (sem texto/ícone),
+  gerado programaticamente (não é uma captura real do avatar).
+- **Correção (rodada 3)**: a 1ª versão do placeholder tinha texto embutido
+  ("Avatar e Renan · aguardando conexão"), que passou a **duplicar** com o
+  overlay ao vivo ("AVATAR DESCONECTADO") depois que corrigi o bug abaixo —
+  as duas camadas de texto ficavam sobrepostas (foi o que você viu no seu
+  print). Troquei pelo fundo neutro atual; quem mostra status agora é só o
+  overlay ao vivo, sem duplicar mensagem.
 - Ordem de resolução do preview (vídeo antes de conectar):
   1. `posterUrl` configurado (preenchido automaticamente ao escolher um
      avatar na lista da API)
@@ -218,17 +225,19 @@ correção):
 | `PROGRESSO-DEMO.md` | **Novo** — este arquivo |
 
 Validado até agora: `tsc --noEmit` limpo, `vite build` (client + SSR) completo
-sem erros, nas duas rodadas. **Nenhum teste funcional/manual foi rodado
-ainda**, e **nada foi commitado nem enviado ao GitHub** — combinado que eu
-confirmo com você antes de dar push (o repo novo tem deploy automático, então
-um push já vira produção).
+sem erros. **Commitado e enviado ao GitHub** — commit `ec9b47c` na branch
+`main` de `github.com/gestao-gzero/avatar-renante`, sem divergência do
+`origin/main` (conferido com `git fetch` antes de enviar). Deploy automático
+deve estar rodando agora. **Nenhum teste funcional/manual foi rodado ainda.**
 
 ---
 
 ## O que falta (em ordem)
 
-1. **Confirmar com você antes do commit/push** (deploy é automático — ver
-   pergunta 1 abaixo).
+1. **Confirmar que o deploy em `renante.gravidadezero.ai` concluiu** e está
+   servindo o código novo (dá pra conferir pelo nome do bot no Meet: se
+   aparecer "Renan", é a versão nova; se ainda for "Renante", o deploy antigo
+   ainda está no ar ou não disparou).
 2. **Rodar o Bloco 0 e 1 do plano de testes** (baseline + sessão local,
    incluindo a tela de login com `renante2026`, e comparar o layout com o
    print original) — primeiro teste real de tudo que mudou.
@@ -244,11 +253,7 @@ um push já vira produção).
 
 ## Perguntas / decisões que precisam de você
 
-1. **Push/commit**: como o deploy é automático ao enviar pro GitHub, meu
-   plano é: (a) você me passar o layout capturado, (b) eu aplico, (c) eu
-   commito tudo de uma vez e **confirmo com você antes de dar `git push`** —
-   tudo bem assim, ou prefere revisar o diff antes mesmo do commit local?
-2. **Poster do avatar**: o PNG que criei é só um placeholder genérico — o
+1. **Poster do avatar**: o PNG que criei é só um placeholder genérico — o
    botão de captura (💡 já explicado no item 10 acima) resolve isso na
    primeira vez que alguém conectar o avatar, ou prefere que eu já capture/
    monte um específico antes disso?
