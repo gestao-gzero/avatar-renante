@@ -163,7 +163,12 @@ const DEFAULT_SETTINGS: Settings = {
     },
   },
   meetDebug: false,
-  meetSilenceSec: 0.5,
+  // 0.5s causava envios duplicados: uma pausa natural no meio da frase (comum
+  // em fala espontânea, principalmente com a latência do STT dentro do Meet)
+  // já bastava pra disparar o flush cedo demais, mandando uma pergunta pela
+  // metade pro n8n — a pessoa continuava falando e um 2º envio saía separado,
+  // gerando duas respostas faladas em sequência (achado no teste de 28/07).
+  meetSilenceSec: 1.5,
   entrevistadorSilenceSec: ENTREVISTADOR_SILENCE_SEC_DEFAULT,
   hotSwapAfterSec: HOT_SWAP_AFTER_SEC_DEFAULT,
   sttEngine: "deepgram",
@@ -226,7 +231,7 @@ function buildMeetUrl(s: Settings, debug: boolean, authToken = ""): string {
     greeting: cfg.greeting,
     mmode: cfg.behavior,
     barge: cfg.bargeIn ? "1" : "0",
-    sil: String(s.meetSilenceSec ?? 0.5),
+    sil: String(s.meetSilenceSec ?? 1.5),
     debug: debug ? "1" : "0",
     auth: authToken, // token de login: o /meet (bot) precisa dele pra chamar getSessionToken
     // Hot-swap DENTRO do Meet (Camada 3): mesmo intervalo/fala de reconexão do
@@ -3097,7 +3102,7 @@ function Index() {
   const resetToDefaults = useCallback(() => {
     if (
       typeof window !== "undefined" &&
-      !window.confirm("Restaurar todas as configurações para o padrão? As alterações locais deste navegador serão perdidas.")
+      !window.confirm("Restaurar todas as configurações E o layout dos painéis para o padrão? As alterações locais deste navegador serão perdidas.")
     ) {
       return;
     }
@@ -3106,6 +3111,13 @@ function Index() {
     settingsRef.current = DEFAULT_SETTINGS;
     try { window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(DEFAULT_SETTINGS)); } catch {}
     markSaved();
+    // "Restaurar padrões" tinha um comportamento inconsistente com "Layout →
+    // Padrão": um resetava só as configurações, o outro só as posições dos
+    // painéis. Um botão chamado "restaurar padrões" deveria fazer as duas
+    // coisas — corrigido após teste (28/07). `resetBento` é function
+    // declaration (hoisted), por isso pode ser chamada aqui mesmo declarada
+    // mais abaixo no componente.
+    resetBento();
   }, [markSaved]);
 
   // ── bento: seed positions from grid on first mount ──
@@ -4202,9 +4214,13 @@ function Index() {
               <div className="field">
                 <label>Pausa antes de enviar <span className="hint">segundos</span></label>
                 <input className="inp" type="number" min={0} max={5} step={0.5}
-                  value={settings.meetSilenceSec ?? 0.5}
-                  onChange={(e) => updateSetting("meetSilenceSec", parseFloat(e.target.value) || 0.5)}
+                  value={settings.meetSilenceSec ?? 1.5}
+                  onChange={(e) => updateSetting("meetSilenceSec", parseFloat(e.target.value) || 1.5)}
                 />
+                <div className="cfgnote" style={{ margin: 0, marginTop: 6 }}>
+                  Baixo demais (ex.: 0.5s) corta a frase no meio de uma pausa natural e manda
+                  2 perguntas separadas pro n8n (2 respostas faladas em sequência). <b>1.5s</b> é o padrão.
+                </div>
               </div>
               <div className="field" style={{ gridColumn: "1 / -1" }}>
                 <div className="switch">
@@ -5159,7 +5175,7 @@ function Index() {
                       onChange={(e) =>
                         setSettingsDraft((d) => ({
                           ...d,
-                          meetSilenceSec: Number(e.target.value) || 0.5,
+                          meetSilenceSec: Number(e.target.value) || 1.5,
                         }))
                       }
                       className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm"

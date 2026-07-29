@@ -1,14 +1,52 @@
 # Progresso — demo do Renan (quarta 29/07 + quinta 30/07)
 
-Última atualização: 28/07, rodada 2 (após seu feedback). Este arquivo é o registro
-de tudo que foi feito, o que falta, e o que depende de você. O roteiro de
-validação está em `PLANO-DE-TESTES.md` (ainda não rodei nada — só código).
+Última atualização: 28/07, após sua primeira rodada real de testes. Este
+arquivo é o registro de tudo que foi feito, o que falta, e o que depende de
+você. Resultado dos testes está em `PLANO-DE-TESTES.md`.
 
-**Status geral: código pronto para os 10 itens pedidos + ajustes da rodada 2
-(senha de login, rename Renan, preview antes de conectar, layout exato do
-Mac). Commitado e enviado ao GitHub (`ec9b47c`, branch `main`) — o deploy
-automático deve estar rodando agora. Nada foi testado na prática ainda —
-esse é o próximo passo, com você acompanhando pelo `PLANO-DE-TESTES.md`.**
+**Status geral: você testou a maior parte do roteiro — quase tudo ✅. Achou 2
+problemas reais (respostas duplicadas no Meet, botão "Restaurar padrões" não
+resetava o layout), os dois já corrigidos e enviados. Hot-swap dentro do
+Google Meet — a peça mais arriscada de tudo isso — validado de ponta a ponta
+numa sessão de 10+ min com 2 ciclos de troca. Faltam só os itens da seção
+"Perguntas" abaixo.**
+
+## ✅ Resultado dos seus testes (28/07)
+
+Quase tudo passou de primeira. Dois achados reais, já corrigidos:
+
+### 🐛 Bug 1 — respostas duplicadas no Meet ("fala algo, depois fala outra coisa")
+**Causa**: `meetSilenceSec` (pausa de silêncio antes de mandar a fala pro n8n
+dentro do Meet) estava em **0.5s** — mais curto que uma pausa natural no meio
+de uma frase falada. Uma pausa pra respirar/pensar já bastava pra disparar o
+envio cedo, com a pergunta pela metade; a pessoa continuava falando, e o
+resto virava um SEGUNDO envio separado — daí as duas respostas em sequência.
+O limite de 1 envio/segundo que já existia não protegia contra isso porque
+pausas naturais no meio da fala costumam passar de 1 segundo.
+
+**Correção**: subi o padrão de 0.5s → **1.5s** (`DEFAULT_SETTINGS.meetSilenceSec`
+em `src/routes/index.tsx`, mais os 2 fallbacks equivalentes em `meet.tsx`).
+Também adicionei uma nota explicando o motivo direto no campo "Pausa antes de
+enviar" (painel Modos), pra quem for mexer nesse valor no futuro não recriar
+o mesmo problema.
+⚠️ **Ainda não testei isso ao vivo** — o valor mudou, mas não repeti seu
+teste do Meet pra confirmar que resolveu. Precisa validar de novo.
+
+### 🐛 Bug 2 — "Restaurar padrões" não restaurava o layout
+Você notou certo: eram dois resets independentes — "Restaurar padrões" (topo)
+só resetava configurações (URLs, IDs, etc.), e só o menu "Layout → Padrão"
+resetava as posições dos painéis. Um botão chamado "Restaurar padrões"
+deveria fazer as duas coisas. Corrigido: agora "Restaurar padrões" reseta
+configurações **e** layout juntos (`resetToDefaults` chama `resetBento`
+internamente, `src/routes/index.tsx`).
+
+### Sem ação necessária
+- Botão de capturar frame "não achei" — sem problema, você disse que o poster
+  automático já está bom assim; não mexi em nada aqui.
+- Placeholder PNG genérico — você gostou de como ficou; mantido.
+- Legendas/transcrição "não sai exatamente o que eu falei" — isso é precisão
+  do motor de STT (Web Speech/Deepgram), não um bug do app; não dá pra
+  "corrigir" no código, é característica de cada motor.
 
 ---
 
@@ -248,26 +286,32 @@ deve estar rodando agora. **Nenhum teste funcional/manual foi rodado ainda.**
 
 ## O que falta (em ordem)
 
-1. **Confirmar que o deploy em `renante.gravidadezero.ai` concluiu** e está
-   servindo o código novo (dá pra conferir pelo nome do bot no Meet: se
-   aparecer "Renan", é a versão nova; se ainda for "Renante", o deploy antigo
-   ainda está no ar ou não disparou).
-2. **Rodar o Bloco 0 e 1 do plano de testes** (baseline + sessão local,
-   incluindo a tela de login com `renante2026`, e comparar o layout com o
-   print original) — primeiro teste real de tudo que mudou.
-3. **Testar hot-swap isolado** (`/meet` solto no navegador, bloco 4) antes de
-   testar dentro do Meet de verdade — é a validação mais importante do dia,
-   já que é código novo.
-4. **Teste Google Meet ponta a ponta** (bloco 5), incluindo o wake-word com
-   "Renan" e com "Renante".
-5. **Conferir listas HeyGen** e o preview antes de conectar (bloco 6/7 do
-   plano de testes) — inclui testar o botão de captura de frame.
+1. **Retestar o Bloco 5 no Meet** com o novo `meetSilenceSec=1.5s` — confirmar
+   que as respostas duplicadas pararam (era o único bug real do bloco).
+2. **Reconferir "Restaurar padrões"** — clicar e ver se agora reseta layout
+   junto com as configurações.
+3. Seguir batendo o resto do roteiro que ainda não foi marcado (Bloco 0,
+   partes do Bloco 3 que ficaram sem resposta clara).
 
 ---
 
 ## Perguntas / decisões que precisam de você
 
-1. **Poster do avatar**: o PNG que criei é só um placeholder genérico — o
+1. **Motor de STT padrão**: você achou o Web Speech melhor que o Deepgram no
+   seu teste. Hoje o padrão é `deepgram` (escolhido originalmente porque é
+   streaming e mais robusto em geral, por isso é o padrão — ver README). Quer
+   que eu troque o padrão pra Web Speech, ou foi só uma observação pontual do
+   seu teste (o motor já é trocável na tela, sem precisar mexer no código)?
+2. **Teste de "derrubar a rede" (Bloco 3)** — você marcou "não entendi". O que
+   esse item verifica: se a internet cair por alguns segundos bem no momento
+   em que o hot-swap está preparando a sessão nova (não a atual, que continua
+   no ar), ele não deveria travar o app — só desiste dessa tentativa e tenta
+   de novo no próximo ciclo automático. Pra testar de propósito: abra o
+   DevTools (F12) → aba Network → marque "Offline" bem no momento em que o
+   log mostrar "HOT-SWAP: pré-aquecendo nova sessão…", espere uns segundos e
+   desmarque. É um teste de robustez, não é crítico pra demo — pode pular se
+   preferir.
+3. **Poster do avatar**: o PNG que criei é só um placeholder genérico — o
    botão de captura (💡 já explicado no item 10 acima) resolve isso na
    primeira vez que alguém conectar o avatar, ou prefere que eu já capture/
    monte um específico antes disso?

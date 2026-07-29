@@ -81,7 +81,7 @@ function readConfig(): Cfg {
     meetMode: q.get("mmode") === "always" ? "always" : "wake",
     bargeIn: q.get("barge") === "1",
     sid: q.get("sid") || "reuniao",
-    silenceSec: Number(q.get("sil")) || 0.5,
+    silenceSec: Number(q.get("sil")) || 1.5,
     authToken: q.get("auth") ?? "",
     hotSwapAfterSec: Number(q.get("hs")) || HOT_SWAP_AFTER_SEC_DEFAULT,
     reconnectGreeting: q.get("rg") ?? "",
@@ -427,7 +427,7 @@ function MeetAvatar() {
 
       // (Re)inicia o timer de silêncio a cada trecho (a pessoa ainda está falando).
       if (meetSilenceTimerRef.current !== null) window.clearTimeout(meetSilenceTimerRef.current);
-      const ms = Math.max(200, (cfgRef.current.silenceSec || 0.5) * 1000);
+      const ms = Math.max(200, (cfgRef.current.silenceSec || 1.5) * 1000);
       meetSilenceTimerRef.current = window.setTimeout(flushMeet, ms);
     },
     [flushMeet],
