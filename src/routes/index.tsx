@@ -24,7 +24,7 @@ import {
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Renan Avatar AI — by GZero" },
+      { title: "Renante Avatar AI — by GZero" },
       {
         name: "description",
         content: "Diagnóstico visível de LiveAvatar, vídeo, microfone e voz",
@@ -39,9 +39,16 @@ const SETTINGS_KEY = "liveavatar.settings.v1";
 const MODE_KEY = "liveavatar.mode.v1";
 const AUTH_KEY = "liveavatar.auth.v1"; // token de login (senha única) no localStorage
 // Nome do bot na lista de participantes do Google Meet (Camadas 1 e 3).
-// NÃO é a wake-word: acordar o avatar aceita tanto "Renan" quanto o nome antigo
-// "Renante" (ver WAKE_RE/END_RE aqui e em meet.tsx).
-const MEET_BOT_NAME = "Renan";
+// "Naner" = "Renan" escrito ao contrário (curiosidade que ele mesmo pode contar).
+// Pronúncia: "Nâner". A wake-word fica em NANER_WAKE (abaixo).
+const MEET_BOT_NAME = "Naner";
+// Wake-word do avatar + variações que o reconhecimento de voz costuma devolver
+// no lugar de "Nâner" (troca de consoante inicial, -er/-eir/-or no fim, etc.).
+// O texto é normalizado (minúsculo, sem acento) antes de bater com esta regex.
+// PROPOSITALMENTE fora da lista: "renan" e "renante". O Renan de verdade está na
+// sala — se o nome dele acordasse o avatar, chamar a pessoa acordaria o bot junto.
+const NANER_WAKE =
+  "naner|nanner|nanar|naneir|nander|nanor|nener|nane|raner|ranner|daner|danner|taner|tanner|zaner|vaner";
 // URL pública oficial do avatar. É ELA que o bot do Recall abre pra renderizar o
 // /meet dentro da reunião — se apontar pra um deploy velho, o Meet roda código antigo.
 const AVATAR_BASE_URL_DEFAULT = "https://renante.gravidadezero.ai";
@@ -141,21 +148,21 @@ const DEFAULT_SETTINGS: Settings = {
   meetLaunchMode: "reuniao",
   meetConfigs: {
     conversa: {
-      greeting: "Olá! Eu sou o Renan, da Gravidade Zero. Podem falar comigo à vontade.",
+      greeting: "Olá! Eu sou o Naner, da Gravidade Zero. Podem falar comigo à vontade.",
       transitionGreeting: "Certo, seguindo no modo conversa.",
       reconnectGreeting: "Eita, caiu a conexão — pode continuar de onde estava.",
       behavior: "always",
       bargeIn: true,
     },
     reuniao: {
-      greeting: "Olá pessoal! Eu sou o Renan, da Gravidade Zero. É só me chamar pelo nome quando precisarem.",
+      greeting: "Olá pessoal! Eu sou o Naner, da Gravidade Zero. É só me chamar pelo nome quando precisarem.",
       transitionGreeting: "Beleza, entrando no modo reunião.",
       reconnectGreeting: "Eita, caiu a conexão — pode continuar de onde estava.",
       behavior: "wake",
       bargeIn: true,
     },
     entrevistador: {
-      greeting: "Oi, tudo bem? Eu sou o Renan e vou conduzir essa conversa. Pra gente começar, qual é o seu nome?",
+      greeting: "Oi, tudo bem? Eu sou o Naner e vou conduzir essa conversa. Pra gente começar, qual é o seu nome?",
       transitionGreeting: "Pronto, vamos para a entrevista.",
       reconnectGreeting: "Eita, caiu a conexão — pode continuar de onde estava.",
       behavior: "always",
@@ -1165,7 +1172,7 @@ function Index() {
       setBootChecks((prev) => ({ ...prev, [id]: ph }));
 
     void (async () => {
-      log("Inicializando console Renan Avatar AI…");
+      log("Inicializando console Renante Avatar AI…");
       await sleep(450);
       if (cancelled) return;
       log("Carregando configurações locais (localStorage)…");
@@ -2203,7 +2210,7 @@ function Index() {
   );
 
   // Núcleo de envio: aceita override de modo e flag `responder` (Reunião).
-  // Aplica REGRA DO VAZIO: se a resposta do Renan vier vazia, não fala e não chama filler.
+  // Aplica REGRA DO VAZIO: se a resposta do Naner vier vazia, não fala e não chama filler.
   const handleSend = useCallback(
     async (rawText?: string, opts?: { responder?: boolean }) => {
       const question = (rawText ?? text).trim();
@@ -2232,7 +2239,7 @@ function Index() {
       setLiveTranscript("");
       const s = settingsRef.current;
       const currentMode = modeRef.current;
-      const renanUrl =
+      const nanerUrl =
         currentMode === "conversa"
           ? s.webhookConversa
           : currentMode === "reuniao"
@@ -2262,15 +2269,15 @@ function Index() {
         typeof performance !== "undefined" ? performance.now() : Date.now();
 
       setN8nStatus({ state: "waiting", detail: "enviando…" });
-      const renanP = fetch(renanUrl, {
+      const nanerP = fetch(nanerUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       })
         .then(async (response) => {
           const txt = await response.text();
-          log(`Webhook Renan (${currentMode}): HTTP ${response.status} ${response.statusText}\n${txt}`);
-          if (!response.ok) throw new Error(`Renan HTTP ${response.status}: ${txt}`);
+          log(`Webhook Naner (${currentMode}): HTTP ${response.status} ${response.statusText}\n${txt}`);
+          if (!response.ok) throw new Error(`Naner HTTP ${response.status}: ${txt}`);
           setN8nStatus({ state: "ok", detail: `respondeu · HTTP ${response.status}` });
           try {
             return JSON.parse(txt);
@@ -2280,7 +2287,7 @@ function Index() {
         })
         .catch((error) => {
           setN8nStatus({ state: "err", detail: "falhou" });
-          logError("erro Renan", error);
+          logError("erro Naner", error);
           return { output: "" };
         });
 
@@ -2319,7 +2326,7 @@ function Index() {
 
       // Se não vai falar (Reunião dormindo), só espera o webhook pra logar e sai.
       if (!willSpeak) {
-        const j: any = await renanP;
+        const j: any = await nanerP;
         log(`(reuniao DORMINDO) resposta ignorada: ${safeStringify(j)}`);
         return;
       }
@@ -2348,12 +2355,12 @@ function Index() {
       }
 
       // Aguarda agente. Se vazio, deixa o filler terminar e sai (sem resposta).
-      const renanJson: any = await renanP;
-      const renanText = (renanJson?.output ?? renanJson?.text ?? renanJson?.message ?? "")
+      const nanerJson: any = await nanerP;
+      const nanerText = (nanerJson?.output ?? nanerJson?.text ?? nanerJson?.message ?? "")
         .toString()
         .trim();
-      if (!renanText) {
-        log(`output vazio — sem resposta do agente. Payload=${safeStringify(renanJson)}`);
+      if (!nanerText) {
+        log(`output vazio — sem resposta do agente. Payload=${safeStringify(nanerJson)}`);
         if (fillerSpeakP) await fillerSpeakP.catch(() => {});
         return;
       }
@@ -2361,9 +2368,9 @@ function Index() {
       // Espera o filler terminar (speak_ended) antes de falar a resposta.
       if (fillerSpeakP) await fillerSpeakP.catch(() => {});
 
-      log(`resposta Renan: "${renanText}"`, "ok");
+      log(`resposta Naner: "${nanerText}"`, "ok");
       try {
-        await speakAndWait(renanText);
+        await speakAndWait(nanerText);
       } catch (error) {
         logError("erro speak_text resposta", error);
       }
@@ -2397,14 +2404,15 @@ function Index() {
         const isActive = meetingActiveRef.current;
 
         // Wake word tolerante às variações do reconhecimento de voz.
-        const wakeRe = /\b(renante|renan|renando|renato|render|dante|dante)\b/;
+        const wakeRe = new RegExp(`\\b(${NANER_WAKE})\\b`);
         const hasWake = wakeRe.test(low);
 
         // Comando de desligar: correspondência FLEXÍVEL (a fala CONTÉM algo disto),
         // com ou sem o nome. Palavras curtas usam limite de palavra p/ evitar falso
         // positivo (ex.: "chegamos" não vira "chega").
-        const endRe =
-          /\b(desligar|desliga|pode desligar|pode parar|pode encerrar|encerra|encerrar|para (renante|renan|renato|render|dante)|chega|tchau|pode ir|era so isso|obrigado por enquanto|dispensar|ja chega|ja deu)\b/;
+        const endRe = new RegExp(
+          `\\b(desligar|desliga|pode desligar|pode parar|pode encerrar|encerra|encerrar|para (${NANER_WAKE})|chega|tchau|pode ir|era so isso|obrigado por enquanto|dispensar|ja chega|ja deu)\\b`,
+        );
         let hasEnd = endRe.test(low);
         // "valeu"/"obrigado" sozinhos só contam como desligar quando ATIVO.
         if (!hasEnd && isActive && /\b(valeu|vlw|obrigado|obrigada|brigado)\b/.test(low)) {
@@ -2433,7 +2441,7 @@ function Index() {
           // Veio pergunta junto com o nome? Tira saudação/nome e vê se sobra conteúdo.
           const resto = low
             .replace(/\b(ola|oi|ei|hey|alo|e ai|eai|opa|fala)\b/g, " ")
-            .replace(/\b(renante|renan|renando|renato|render|dante|dante)\b/g, " ")
+            .replace(new RegExp(`\\b(${NANER_WAKE})\\b`, "g"), " ")
             .replace(/[^a-z0-9]+/g, " ")
             .trim();
           if (resto.length >= 4) {
@@ -2658,7 +2666,9 @@ function Index() {
               const text = words.map((w: any) => w?.text ?? "").join(" ").trim()
                 || (seg?.text ?? "").toString().trim();
               if (!text) continue;
-              if (speaker && /renante|renan/i.test(speaker)) {
+              // Casa só com o NOME DO BOT (Naner) — antes casava com "renan"
+              // também, o que descartava a fala do Renan de VERDADE na reunião.
+              if (speaker && /naner|nanner/i.test(speaker)) {
                 log(`[CAMADA 2] (ignora própria fala) ${speaker}: ${text}`);
                 continue;
               }
@@ -2927,7 +2937,7 @@ function Index() {
         id: "reuniao-chamado",
         title: "Reunião (chamado, responder=true)",
         url: s.webhookReuniao,
-        body: { question: "Renan, responda apenas OK", sessionId: "diagnostico-reuniao", responder: true },
+        body: { question: "Naner, responda apenas OK", sessionId: "diagnostico-reuniao", responder: true },
         validate: (p) => {
           const o = (p?.output ?? "").toString().trim();
           return { ok: o.length > 0, reason: o ? `output="${o}"` : "output vazio (esperado texto)" };
@@ -3011,7 +3021,7 @@ function Index() {
     const failed = results.filter((r) => r.status === "fail");
     const now = new Date();
     const header = [
-      `# Diagnóstico HeyGen LiveAvatar — Renan`,
+      `# Diagnóstico HeyGen LiveAvatar — Naner`,
       ``,
       `**Data:** ${now.toLocaleString()}`,
       `**Resumo:** ${okCount} de ${total} testes OK`,
@@ -3290,6 +3300,52 @@ function Index() {
     grip.addEventListener("pointerup", onUp);
   }
 
+  // ── bento: encaixa o layout na LARGURA da tela (só lateral) ──
+  // Mesmo layout, mesma disposição: escala apenas x/w proporcionalmente até a
+  // borda direita do último painel encostar na margem direita. Resolve o "gap"
+  // que sobra quando a tela de quem abre é mais larga (ou mais estreita) que a
+  // tela onde o layout foi montado. Altura e ordem dos painéis não mudam.
+  function fitBentoWidth() {
+    const be = bentoRef.current;
+    if (!be || isMobile) return;
+    const ids = Object.keys(bentoRects);
+    if (!ids.length) return;
+
+    let minX = Infinity;
+    let maxRight = 0;
+    for (const r of Object.values(bentoRects)) {
+      minX = Math.min(minX, r.x);
+      maxRight = Math.max(maxRight, r.x + r.w);
+    }
+    const contentW = maxRight - minX;
+    if (!Number.isFinite(minX) || contentW <= 0) return;
+
+    // Margem direita igual à esquerda, pra sobrar respiro simétrico.
+    const targetRight = be.clientWidth - minX;
+    const scale = (targetRight - minX) / contentW;
+    if (!Number.isFinite(scale) || scale <= 0) return;
+
+    const next: Record<string, PanelRect> = {};
+    for (const [pid, r] of Object.entries(bentoRects)) {
+      next[pid] = {
+        ...r,
+        x: Math.round(minX + (r.x - minX) * scale),
+        w: Math.max(80, Math.round(r.w * scale)),
+      };
+      // Quem encostava na direita continua encostando EXATAMENTE — sem isso o
+      // arredondamento deixaria de volta um gap de alguns pixels, que é justo
+      // o problema que este botão existe pra resolver.
+      if (r.x + r.w === maxRight) next[pid].w = targetRight - next[pid].x;
+    }
+
+    setBentoRects(next);
+    Object.entries(next).forEach(([pid, r]) => {
+      const el = panelRefs.current[pid];
+      if (el) { el.style.left = r.x + "px"; el.style.top = r.y + "px"; el.style.width = r.w + "px"; el.style.height = r.h + "px"; }
+    });
+    setBentoPopOpen(false);
+  }
+
   // ── bento: reset to defaults ──
   function resetBento() {
     const rects = { ...DEFAULT_RECTS };
@@ -3394,7 +3450,7 @@ function Index() {
             <LoginLogo />
           </div>
           <div className="mb-5 text-center text-sm text-white/60">
-            Renan Avatar AI · acesso restrito
+            Renante Avatar AI · acesso restrito
           </div>
           <label className="mb-1 block text-xs font-medium text-white/70">Senha de acesso</label>
           <input
@@ -3452,7 +3508,7 @@ function Index() {
         <div className="brand">
           <img src="/GZero%20-%20Logo%20Rosa%20-%2014fev22.jpeg" alt="GZero" style={{ height: 30, width: "auto", objectFit: "contain", flex: "0 0 auto" }} />
           <div>
-            <h1>Renan <b>Avatar</b> AI</h1>
+            <h1>Renante <b>Avatar</b> AI</h1>
             <span className="by">console de diagnóstico · by GZero</span>
           </div>
         </div>
@@ -3501,6 +3557,9 @@ function Index() {
               <div className="sgrp">
                 <div className="slab">Layout dos painéis</div>
                 <div className="srow">
+                  <button onClick={fitBentoWidth} title="Estica/encolhe os painéis na horizontal até encostar nas duas bordas, sem mudar a disposição">
+                    ⇔ Encaixar na largura
+                  </button>
                   <button onClick={packBento}>⇲ Organizar</button>
                   <button onClick={resetBento}>↺ Padrão</button>
                 </div>
@@ -4459,7 +4518,7 @@ function Index() {
               <span className="flex items-baseline gap-2 text-sm">
                 <img src="/GZero%20-%20Logo%20Rosa%20-%2014fev22.jpeg" alt="GZero" className="h-8 w-auto object-contain" />
                 <span className="text-white/40">·</span>
-                <span className="font-semibold">Renan</span>
+                <span className="font-semibold">Naner</span>
                 <span className="text-white/40">·</span>
                 <span className="text-white/80">{modeLabel}</span>
               </span>
@@ -4589,8 +4648,8 @@ function Index() {
                   </span>
                 </div>
                 <div className="space-y-1 text-[10px] leading-snug text-white/60">
-                  <div><span className="text-emerald-300/90">Ativar:</span> "oi Renan" / só o nome</div>
-                  <div><span className="text-white/50">Desativar:</span> "tchau Renan" / "pode parar"</div>
+                  <div><span className="text-emerald-300/90">Ativar:</span> "oi Naner" / só o nome</div>
+                  <div><span className="text-white/50">Desativar:</span> "tchau Naner" / "pode parar"</div>
                 </div>
               </div>
             )}
@@ -5199,7 +5258,7 @@ function Index() {
                     Modo diagnóstico no Meet (mostra status na câmera do bot)
                   </label>
                   <span className="block text-xs text-muted-foreground">
-                    Use pra depurar: a câmera do Renan mostra se o WebSocket de transcrição
+                    Use pra depurar: a câmera do Naner mostra se o WebSocket de transcrição
                     conectou e o que está chegando. Desligue na demo real.
                   </span>
                 </div>
@@ -5275,7 +5334,7 @@ function Index() {
                     type="button"
                     onClick={() => void joinMeetingWithAvatar()}
                     disabled={botJoining || !!botId}
-                    title="Coloca o avatar do Renan como participante (câmera + voz) dentro do Meet"
+                    title="Coloca o avatar Naner como participante (câmera + voz) dentro do Meet"
                     className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
                   >
                     {botJoining ? "Entrando…" : botId ? "Avatar na reunião" : `Entrar na reunião (${settings.meetLaunchMode})`}

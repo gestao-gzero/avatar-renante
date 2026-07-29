@@ -1,4 +1,9 @@
-# Renan Avatar AI — by GZero
+# Renante Avatar AI — by GZero
+
+Plataforma de avatares em IA da Gravidade Zero. O nome **Renante** vem de
+**Renan + Dante**, os dois fundadores — a ideia é hospedar o avatar dos dois.
+Hoje há um avatar no ar: o **Naner** (pronúncia "Nâner", que é "Renan" escrito
+ao contrário), o avatar do Renan.
 
 Avatar AI interativo em Português Brasileiro. O usuário fala via microfone → n8n processa a resposta → o avatar HeyGen fala de volta. Pensado para apresentações, reuniões e entrevistas ao vivo.
 
