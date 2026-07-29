@@ -148,21 +148,21 @@ const DEFAULT_SETTINGS: Settings = {
   meetLaunchMode: "reuniao",
   meetConfigs: {
     conversa: {
-      greeting: "Olá! Eu sou o Naner, da Gravidade Zero. Podem falar comigo à vontade.",
+      greeting: "Olá! Eu sou o Nâner, da Gravidade Zero. Podem falar comigo à vontade.",
       transitionGreeting: "Certo, seguindo no modo conversa.",
       reconnectGreeting: "Eita, caiu a conexão — pode continuar de onde estava.",
       behavior: "always",
       bargeIn: true,
     },
     reuniao: {
-      greeting: "Olá pessoal! Eu sou o Naner, da Gravidade Zero. É só me chamar pelo nome quando precisarem.",
+      greeting: "Olá pessoal! Eu sou o Nâner, da Gravidade Zero. É só me chamar pelo nome quando precisarem.",
       transitionGreeting: "Beleza, entrando no modo reunião.",
       reconnectGreeting: "Eita, caiu a conexão — pode continuar de onde estava.",
       behavior: "wake",
       bargeIn: true,
     },
     entrevistador: {
-      greeting: "Oi, tudo bem? Eu sou o Naner e vou conduzir essa conversa. Pra gente começar, qual é o seu nome?",
+      greeting: "Oi, tudo bem? Eu sou o Nâner e vou conduzir essa conversa. Pra gente começar, qual é o seu nome?",
       transitionGreeting: "Pronto, vamos para a entrevista.",
       reconnectGreeting: "Eita, caiu a conexão — pode continuar de onde estava.",
       behavior: "always",
@@ -205,6 +205,18 @@ function loadSettings(): Settings {
       reuniao: { ...DEFAULT_SETTINGS.meetConfigs.reuniao, ...(pc.reuniao ?? {}) },
       entrevistador: { ...DEFAULT_SETTINGS.meetConfigs.entrevistador, ...(pc.entrevistador ?? {}) },
     };
+    // MIGRAÇÃO: falas salvas que ainda citam o nome antigo do avatar ("Renan"/
+    // "Renante") — de antes do rename pra "Nâner" — ficariam presas nesse texto
+    // pra sempre, já que config salva sempre vence o default novo do código.
+    // Detecta e substitui pelo default atual campo a campo.
+    const staleName = /renante|renan/i;
+    (Object.keys(merged.meetConfigs) as Mode[]).forEach((m) => {
+      (["greeting", "transitionGreeting", "reconnectGreeting"] as const).forEach((field) => {
+        if (staleName.test(merged.meetConfigs[m][field])) {
+          merged.meetConfigs[m][field] = DEFAULT_SETTINGS.meetConfigs[m][field];
+        }
+      });
+    });
     return merged;
   } catch {
     return DEFAULT_SETTINGS;
