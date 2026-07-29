@@ -369,6 +369,46 @@ O n8n tem rascunho/publicado separados: `update_workflow` salva no rascunho e
 **não** vai pro ar sozinho. Publiquei os 3 (`activeVersionId` mudou nos três),
 por isso os testes acima já rodaram na versão nova.
 
+---
+
+## Persona renomeada para "Renan" nos prompts do n8n (28/07, rodada 5)
+
+Fecha a contradição que existia: o app já dizia "Renan" mas o n8n ainda
+respondia "Eu sou o Renante". Agora está alinhado nos 3 workflows.
+
+**Regra aplicada** (a mesma nos três):
+- Nome é **Renan** — é assim que ele se apresenta, sempre. Nunca se apresenta
+  como Renante e nunca menciona que já se chamou assim.
+- **Mas continua atendendo por "Renante"**: se alguém chamar assim, ele entende
+  que é com ele e segue normal, **sem corrigir a pessoa e sem fazer questão do
+  assunto**.
+- Identidade: "o avatar em IA do Renan, um dos fundadores da Gravidade Zero"
+  (a história antiga de "junção de Renan + Dante" saiu, já que o nome não é
+  mais um trocadilho dos dois).
+- A abertura do Entrevistador foi alinhada com a do app, palavra por palavra:
+  *"Oi, tudo bem? Eu sou o Renan e vou conduzir essa conversa. Pra gente
+  começar, qual é o seu nome?"*
+
+### O conflito de nome no Entrevistador — resolvido
+Como o avatar agora se chama Renan **e** o entrevistado também pode ser o Renan
+(o fundador), havia risco real de o modelo se confundir na hora de escolher o
+modo da entrevista. Adicionei uma seção explícita:
+- Quando ele pergunta "qual é o seu nome?" e a pessoa responde "Renan", esse é
+  o nome **dela** → entra no MODO renan normalmente.
+- Proibido responder "eu também me chamo Renan", comentar a coincidência ou
+  achar estranho.
+
+**Testado ao vivo, os 3 modos:**
+| Teste | Resultado |
+|---|---|
+| "quem é você" (Conversa) | *"Sou o Renan, o avatar em IA do Renan, um dos fundadores..."* ✅ |
+| "renante, tudo bem contigo?" | Respondeu normal, sem corrigir ✅ |
+| "e aí renante, qual seu nome mesmo?" | *"Eu sou o Renan."* — sem corrigir nem comentar ✅ |
+| Entrevistador: abertura | *"Eu sou o Renan e vou conduzir essa conversa..."* ✅ |
+| Entrevistador: entrevistado diz "Renan" | Entrou no MODO renan, tratou como nome da pessoa, sem confusão ✅ |
+| Entrevistador: "Tom Moreira Leite" | MODO tom intacto (apresentação + pede permissão) ✅ |
+| Entrevistador: "Roberto" | MODO convidado intacto ✅ |
+
 ### Ideias de latência que NÃO fiz (mais risco, ficam pra depois da demo)
 1. **Injetar o filler direto no prompt** via nó Postgres no fluxo principal, em
    vez de tool — mata o round-trip mantendo 100% da proteção. Precisa adicionar
@@ -398,26 +438,7 @@ por isso os testes acima já rodaram na versão nova.
 
 ## Perguntas / decisões que precisam de você
 
-1. 🔴 **"Renante" x "Renan" — o app e o n8n estão se contradizendo AGORA.**
-   No app eu troquei tudo pra "Renan" (inclusive a saudação falada: "Eu sou o
-   Renan"). Mas os prompts do n8n continuam com a persona "Renante" — e isso é
-   fala real: no meu teste de hoje, perguntei "quem é você" e ele respondeu
-   *"Eu sou o Renante, nascido da união de Renan com Dante"*. Ou seja, ele se
-   apresenta como Renan e depois se chama de Renante na mesma conversa.
-   - **Conversa e Reunião**: renomear é seguro, é só texto de persona.
-   - **Entrevistador**: ⚠️ aqui tem um conflito real. O prompt usa "Renan" como
-     **nome do entrevistado** pra detectar o modo (`se o nome for "Renan" →
-     MODO renan`), e tem uma seção inteira só pra separar isso: *"Você é
-     Renante. A pessoa pode se chamar Renan..."*. Se o avatar também virar
-     "Renan", essa distinção fica ambígua e pode quebrar a detecção de modo —
-     justo no modo da entrevista do Tom. Além disso a abertura de palco
-     ("uma mistura do consciente do Renan e do Dante") é um trocadilho que só
-     funciona com o nome "Renante".
-   - **Minha recomendação**: renomear em Conversa e Reunião, e **deixar o
-     Entrevistador como está** até depois da demo. Mas é decisão sua — me fala
-     e eu faço.
-
-2. **Teste de "derrubar a rede" (Bloco 3)** — você marcou "não entendi". O que
+1. **Teste de "derrubar a rede" (Bloco 3)** — você marcou "não entendi". O que
    esse item verifica: se a internet cair por alguns segundos bem no momento
    em que o hot-swap está preparando a sessão nova (não a atual, que continua
    no ar), ele não deveria travar o app — só desiste dessa tentativa e tenta
