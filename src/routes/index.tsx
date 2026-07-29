@@ -171,7 +171,10 @@ const DEFAULT_SETTINGS: Settings = {
   meetSilenceSec: 1.5,
   entrevistadorSilenceSec: ENTREVISTADOR_SILENCE_SEC_DEFAULT,
   hotSwapAfterSec: HOT_SWAP_AFTER_SEC_DEFAULT,
-  sttEngine: "deepgram",
+  // Web Speech como padrão: preferido no teste de 28/07 (transcrição mais
+  // fiel que o Deepgram na prática). Deepgram continua disponível — troca na
+  // tela (painel Modos/STT) sem precisar mexer em código.
+  sttEngine: "webspeech",
   deepgramApiKey: "",
 };
 

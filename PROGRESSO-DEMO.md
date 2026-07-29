@@ -295,14 +295,22 @@ deve estar rodando agora. **Nenhum teste funcional/manual foi rodado ainda.**
 
 ---
 
+## Resolvido nesta rodada
+
+- **Motor de STT padrão → Web Speech**: trocado (`DEFAULT_SETTINGS.sttEngine`,
+  `src/routes/index.tsx`). ⚠️ **Só vale pra navegador NOVO** (sem config salva
+  ainda) — no seu navegador atual, que já testou e já tem `deepgram` salvo no
+  `localStorage`, o valor salvo continua vencendo o novo default (mesma regra
+  de sempre: config salva > default). Pra pegar o Web Speech no seu Mac agora,
+  clique no botão **"Web Speech"** no painel STT (um clique, já existe na
+  tela) — não precisa esperar deploy nem mexer em nada técnico.
+- **Poster do avatar**: confirmado, mantido como está. Sem ação.
+
+---
+
 ## Perguntas / decisões que precisam de você
 
-1. **Motor de STT padrão**: você achou o Web Speech melhor que o Deepgram no
-   seu teste. Hoje o padrão é `deepgram` (escolhido originalmente porque é
-   streaming e mais robusto em geral, por isso é o padrão — ver README). Quer
-   que eu troque o padrão pra Web Speech, ou foi só uma observação pontual do
-   seu teste (o motor já é trocável na tela, sem precisar mexer no código)?
-2. **Teste de "derrubar a rede" (Bloco 3)** — você marcou "não entendi". O que
+1. **Teste de "derrubar a rede" (Bloco 3)** — você marcou "não entendi". O que
    esse item verifica: se a internet cair por alguns segundos bem no momento
    em que o hot-swap está preparando a sessão nova (não a atual, que continua
    no ar), ele não deveria travar o app — só desiste dessa tentativa e tenta
@@ -311,7 +319,3 @@ deve estar rodando agora. **Nenhum teste funcional/manual foi rodado ainda.**
    log mostrar "HOT-SWAP: pré-aquecendo nova sessão…", espere uns segundos e
    desmarque. É um teste de robustez, não é crítico pra demo — pode pular se
    preferir.
-3. **Poster do avatar**: o PNG que criei é só um placeholder genérico — o
-   botão de captura (💡 já explicado no item 10 acima) resolve isso na
-   primeira vez que alguém conectar o avatar, ou prefere que eu já capture/
-   monte um específico antes disso?
