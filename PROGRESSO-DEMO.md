@@ -295,6 +295,94 @@ deve estar rodando agora. **Nenhum teste funcional/manual foi rodado ainda.**
 
 ---
 
+## Prompts do n8n — gírias e latência (28/07, rodada 4)
+
+⚠️ Estas mudanças **não estão neste repositório** — foram feitas direto nos
+workflows do n8n (`n8n.srv1435894.hstgr.cloud`). Registrado aqui só pra ter
+histórico. Os 3 workflows: `[Avatar] Renante Conversa` / `Reuniao` /
+`Entrevistador`.
+
+### Por que ele abusava do "visse" — causa encontrada
+"visse" aparecia **duas vezes** em cada prompt e sempre **em primeiro lugar**
+na lista de gírias ("com 'visse', 'massa', 'rapaz', 'vixe' sem exagero" e
+"Use SOMENTE as girias leves e seguras: 'visse', ..."). Primeira posição +
+repetição = o modelo puxa pra ela. E "sem exagero" não é uma instrução
+verificável — não dá pro modelo saber se passou do ponto.
+
+**Correção**: criei uma seção `## GIRIA - DOSAGEM` com regra **contável** em
+vez de vaga:
+- "A MAIORIA das respostas NÃO leva gíria nenhuma"
+- No máximo **uma gíria por resposta**
+- "visse": no máximo 1 a cada 5 respostas, proibido em duas seguidas
+- "visse" saiu da primeira posição das listas
+
+### "babado" adicionado
+Pesquisei o uso antes de escrever ([Antenando](https://www.antenando.com.br/babado-significado/),
+[Dicionário inFormal](https://www.dicionarioinformal.com.br/babado/)) — é gíria
+de fofoca/novidade/situação de impacto ("qual é o babado?", "babado forte").
+
+Como é uma palavra com carga de *fofoca*, restringi aos dois usos que cabem num
+contexto profissional, pra não soar fofoqueiro numa reunião de negócios:
+1. `"o babado é o seguinte"` — pra emendar direto no ponto principal
+2. `"que babado!"` — reagindo a novidade boa/surpreendente
+
+E proibi explicitamente: nunca usar "babado" pra comentar/fofocar sobre
+pessoas, nem em assunto sério, ruim ou delicado. **No modo Tom (entrevista com
+o presidente da ABF) proibi "babado" por completo** — aquele modo já pedia
+registro de jornalista sênior sem gíria pesada.
+
+Também precisei adicionar "babado" à allow-list da seção LINGUAGEM RESPEITOSA
+(que diz "use SOMENTE estas gírias") — senão a regra estrita bloquearia a
+palavra nova.
+
+### Latência — o que fiz (mudança só de prompt, sem mexer na estrutura)
+Achei um custo fixo em **toda** resposta: os prompts de Conversa e Reunião
+mandavam *"ANTES DE TUDO, CHAME a tool Ver Filler"*. Isso é uma ida e volta
+extra ao modelo (LLM decide chamar → consulta Postgres → LLM responde) em
+**cada** interação.
+
+O detalhe é que a proteção real contra repetir o filler não é a tool — é a
+regra *"nunca comece com 'vou ver' / 'vou conferir' / 'deixa eu olhar'"*, que
+custa zero. A tool só confirmava literalmente o que já estava proibido.
+
+**Correção**: a tool virou **opcional** ("por padrão NÃO chame"), e reforcei a
+regra de começar direto pelo resultado. Removeu um round-trip de LLM por
+resposta sem mexer em nó nenhum — é reversível editando só o texto do prompt.
+- Risco residual: sem consultar, o avatar pode coincidir semanticamente com o
+  filler de vez em quando. É cosmético, nunca quebra.
+
+### Verificado ao vivo (não é só teoria)
+Rodei 12 chamadas reais nos webhooks (sessões isoladas `teste-*-claude-*` pra
+não sujar memória de produção):
+- **"visse"**: 1 aparição em 9 respostas, no fim de frase de confirmação ✅
+- **"babado"**: 2 aparições, ambas naturais — *"Que babado! Parabéns demais"*
+  (reagindo a meta batida) e *"O babado é usar IA pra ampliar criação..."* ✅
+- Maioria das respostas sem gíria nenhuma, e nenhuma gíria em resposta séria ✅
+- Latência medida: **1,7s a 3,8s** (sem tool), a maioria perto de 1,8s
+
+⚠️ Não tenho medição "antes" pra comparar — o ganho de latência é estrutural
+(um round-trip a menos por resposta), não um número que eu tenha medido dos
+dois lados.
+
+### Publicação
+O n8n tem rascunho/publicado separados: `update_workflow` salva no rascunho e
+**não** vai pro ar sozinho. Publiquei os 3 (`activeVersionId` mudou nos três),
+por isso os testes acima já rodaram na versão nova.
+
+### Ideias de latência que NÃO fiz (mais risco, ficam pra depois da demo)
+1. **Injetar o filler direto no prompt** via nó Postgres no fluxo principal, em
+   vez de tool — mata o round-trip mantendo 100% da proteção. Precisa adicionar
+   nó e religar conexões: mexe na estrutura, não faria na véspera.
+2. **`contextWindowLength: 20` → 10** no Reunião. Lá cada frase ouvida na sala
+   é gravada no histórico ("Gravar Contexto"), então 20 mensagens enchem de
+   conversa ambiente e viram tokens de entrada em toda resposta. Corta latência,
+   mas reduz memória — precisa testar.
+3. **Entrevistador usa `gpt-5.4` (modelo cheio)**, os outros dois usam
+   `gpt-5.4-mini`. Trocar aceleraria, mas é justo o modo da entrevista do Tom —
+   não mexeria em qualidade sem teste.
+
+---
+
 ## Resolvido nesta rodada
 
 - **Motor de STT padrão → Web Speech**: trocado (`DEFAULT_SETTINGS.sttEngine`,
@@ -310,7 +398,26 @@ deve estar rodando agora. **Nenhum teste funcional/manual foi rodado ainda.**
 
 ## Perguntas / decisões que precisam de você
 
-1. **Teste de "derrubar a rede" (Bloco 3)** — você marcou "não entendi". O que
+1. 🔴 **"Renante" x "Renan" — o app e o n8n estão se contradizendo AGORA.**
+   No app eu troquei tudo pra "Renan" (inclusive a saudação falada: "Eu sou o
+   Renan"). Mas os prompts do n8n continuam com a persona "Renante" — e isso é
+   fala real: no meu teste de hoje, perguntei "quem é você" e ele respondeu
+   *"Eu sou o Renante, nascido da união de Renan com Dante"*. Ou seja, ele se
+   apresenta como Renan e depois se chama de Renante na mesma conversa.
+   - **Conversa e Reunião**: renomear é seguro, é só texto de persona.
+   - **Entrevistador**: ⚠️ aqui tem um conflito real. O prompt usa "Renan" como
+     **nome do entrevistado** pra detectar o modo (`se o nome for "Renan" →
+     MODO renan`), e tem uma seção inteira só pra separar isso: *"Você é
+     Renante. A pessoa pode se chamar Renan..."*. Se o avatar também virar
+     "Renan", essa distinção fica ambígua e pode quebrar a detecção de modo —
+     justo no modo da entrevista do Tom. Além disso a abertura de palco
+     ("uma mistura do consciente do Renan e do Dante") é um trocadilho que só
+     funciona com o nome "Renante".
+   - **Minha recomendação**: renomear em Conversa e Reunião, e **deixar o
+     Entrevistador como está** até depois da demo. Mas é decisão sua — me fala
+     e eu faço.
+
+2. **Teste de "derrubar a rede" (Bloco 3)** — você marcou "não entendi". O que
    esse item verifica: se a internet cair por alguns segundos bem no momento
    em que o hot-swap está preparando a sessão nova (não a atual, que continua
    no ar), ele não deveria travar o app — só desiste dessa tentativa e tenta
