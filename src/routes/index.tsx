@@ -175,7 +175,7 @@ const DEFAULT_SETTINGS: Settings = {
   // já bastava pra disparar o flush cedo demais, mandando uma pergunta pela
   // metade pro n8n — a pessoa continuava falando e um 2º envio saía separado,
   // gerando duas respostas faladas em sequência (achado no teste de 28/07).
-  meetSilenceSec: 1.5,
+  meetSilenceSec: 2.5,
   entrevistadorSilenceSec: ENTREVISTADOR_SILENCE_SEC_DEFAULT,
   hotSwapAfterSec: HOT_SWAP_AFTER_SEC_DEFAULT,
   // Web Speech como padrão: preferido no teste de 28/07 (transcrição mais
@@ -253,7 +253,7 @@ function buildMeetUrl(s: Settings, debug: boolean, authToken = ""): string {
     greeting: cfg.greeting,
     mmode: cfg.behavior,
     barge: cfg.bargeIn ? "1" : "0",
-    sil: String(s.meetSilenceSec ?? 1.5),
+    sil: String(s.meetSilenceSec ?? 2.5),
     debug: debug ? "1" : "0",
     auth: authToken, // token de login: o /meet (bot) precisa dele pra chamar getSessionToken
     // Hot-swap DENTRO do Meet (Camada 3): mesmo intervalo/fala de reconexão do
@@ -4303,8 +4303,8 @@ function Index() {
               <div className="field">
                 <label>Pausa antes de enviar <span className="hint">segundos</span></label>
                 <input className="inp" type="number" min={0} max={5} step={0.5}
-                  value={settings.meetSilenceSec ?? 1.5}
-                  onChange={(e) => updateSetting("meetSilenceSec", parseFloat(e.target.value) || 1.5)}
+                  value={settings.meetSilenceSec ?? 2.5}
+                  onChange={(e) => updateSetting("meetSilenceSec", parseFloat(e.target.value) || 2.5)}
                 />
                 <div className="cfgnote" style={{ margin: 0, marginTop: 6 }}>
                   Baixo demais (ex.: 0.5s) corta a frase no meio de uma pausa natural e manda
@@ -5264,7 +5264,7 @@ function Index() {
                       onChange={(e) =>
                         setSettingsDraft((d) => ({
                           ...d,
-                          meetSilenceSec: Number(e.target.value) || 1.5,
+                          meetSilenceSec: Number(e.target.value) || 2.5,
                         }))
                       }
                       className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm"

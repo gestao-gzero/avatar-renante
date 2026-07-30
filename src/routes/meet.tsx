@@ -89,7 +89,7 @@ function readConfig(): Cfg {
     meetMode: q.get("mmode") === "always" ? "always" : "wake",
     bargeIn: q.get("barge") === "1",
     sid: q.get("sid") || "reuniao",
-    silenceSec: Number(q.get("sil")) || 1.5,
+    silenceSec: Number(q.get("sil")) || 2.5,
     authToken: q.get("auth") ?? "",
     hotSwapAfterSec: Number(q.get("hs")) || HOT_SWAP_AFTER_SEC_DEFAULT,
     reconnectGreeting: q.get("rg") ?? "",
@@ -194,6 +194,40 @@ function MeetAvatar() {
       currentUtteranceRef.current = null;
     },
     [log, waitForAvatarEnd],
+  );
+
+  // ---- IA classificadora: "chamaram o Naner ou só falaram dele?" ----
+  // Roda ANTES de acordar/falar, então precisa ser rápida (~700-900ms medidos).
+  // A URL sai do próprio webhook de Reunião (mesma instância n8n), trocando só o path
+  // — assim não precisa de mais um parâmetro na query string do /meet.
+  // FAIL-OPEN de propósito: se a classificadora cair ou demorar, assume que É chamado.
+  // Melhor ele responder de vez em quando sem precisar do que ficar mudo na demo.
+  const classificarChamada = useCallback(
+    async (texto: string): Promise<boolean> => {
+      const wr = cfgRef.current.webhookReuniao;
+      if (!wr) return true;
+      const url = wr.replace(/\/[^/]*$/, "/naner-classificar");
+      const ctrl = new AbortController();
+      const timer = window.setTimeout(() => ctrl.abort(), 2500);
+      try {
+        const r = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question: texto }),
+          signal: ctrl.signal,
+        });
+        const j: any = await r.json();
+        const decisao = (j?.decisao ?? "").toString().toUpperCase();
+        log(`classificadora: "${texto}" → ${decisao || "(vazio)"}`);
+        return decisao !== "IGNORAR"; // vazio/erro → fail-open (responde)
+      } catch (e: any) {
+        log(`classificadora falhou (${e?.message ?? e}) — assumindo que É chamado`, "err");
+        return true;
+      } finally {
+        window.clearTimeout(timer);
+      }
+    },
+    [log],
   );
 
   // ---- envio pro n8n com FILLER INSTANTÂNEO (webhook = o do modo escolhido) ----
@@ -373,9 +407,19 @@ function MeetAvatar() {
 
       // CASO 1 — DORMINDO + wake word (e não é adeus) → ATIVO.
       if (!isActive && hasWake && !hasEnd) {
+        // O nome apareceu na fala, mas isso NÃO significa que chamaram ele: pode ser
+        // menção ("o Nâner está muito bom né pessoal"). Confirma a INTENÇÃO com a IA
+        // classificadora ANTES de acordar/falar — tem que ser antes porque o filler
+        // dispara junto com handleSend, e um filler numa menção ficaria no vácuo.
+        const querFalar = await classificarChamada(t);
+        if (!querFalar) {
+          log(`nome citado, mas era MENÇÃO (não chamado) — segue dormindo: "${t}"`, "ok");
+          await handleSend(t, false); // grava contexto, não fala
+          return;
+        }
         meetingActiveRef.current = true;
         setActive(true);
-        log(`→ ATIVO (wake word: "${t}")`, "ok");
+        log(`→ ATIVO (chamado confirmado pela IA: "${t}")`, "ok");
         const resto = low
           .replace(/\b(ola|oi|ei|hey|alo|e ai|eai|opa|fala)\b/g, " ")
           .replace(new RegExp(`\\b(${NANER_WAKE})\\b`, "g"), " ")
@@ -402,7 +446,7 @@ function MeetAvatar() {
       // CASO 4 — DORMINDO + fala normal → grava contexto (responder:false), sem falar.
       await handleSend(t, false);
     },
-    [handleSend, log, speakAndWait],
+    [handleSend, log, speakAndWait, classificarChamada],
   );
 
   // Junta os trechos acumulados e dispara a classificação quando a pessoa para.
@@ -454,7 +498,7 @@ function MeetAvatar() {
 
       // (Re)inicia o timer de silêncio a cada trecho (a pessoa ainda está falando).
       if (meetSilenceTimerRef.current !== null) window.clearTimeout(meetSilenceTimerRef.current);
-      const ms = Math.max(200, (cfgRef.current.silenceSec || 1.5) * 1000);
+      const ms = Math.max(200, (cfgRef.current.silenceSec || 2.5) * 1000);
       meetSilenceTimerRef.current = window.setTimeout(flushMeet, ms);
     },
     [flushMeet],
