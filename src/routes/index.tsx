@@ -2228,6 +2228,38 @@ function Index() {
     [connected, log, logError, waitForAvatarEnd],
   );
 
+  // IA classificadora: "chamaram o Naner ou só falaram dele?". Só roda quando o regex
+  // JÁ detectou o nome — nunca em fala ambiente, pra não virar uma chamada de LLM por
+  // frase da reunião. FAIL-OPEN: se cair ou demorar, assume que é chamado (melhor
+  // responder de vez em quando sem precisar do que ficar mudo).
+  const classificarChamada = useCallback(
+    async (texto: string): Promise<boolean> => {
+      const wr = settingsRef.current.webhookReuniao;
+      if (!wr) return true;
+      const url = wr.replace(/\/[^/]*$/, "/naner-classificar");
+      const ctrl = new AbortController();
+      const timer = window.setTimeout(() => ctrl.abort(), 2500);
+      try {
+        const r = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question: texto }),
+          signal: ctrl.signal,
+        });
+        const j: any = await r.json();
+        const decisao = (j?.decisao ?? "").toString().toUpperCase();
+        log(`classificadora: "${texto}" → ${decisao || "(vazio)"}`);
+        return decisao !== "IGNORAR"; // vazio/erro → fail-open (responde)
+      } catch (e) {
+        logError("classificadora falhou — assumindo que É chamado", e);
+        return true;
+      } finally {
+        window.clearTimeout(timer);
+      }
+    },
+    [log, logError],
+  );
+
   // Núcleo de envio: aceita override de modo e flag `responder` (Reunião).
   // Aplica REGRA DO VAZIO: se a resposta do Naner vier vazia, não fala e não chama filler.
   const handleSend = useCallback(
@@ -2343,25 +2375,13 @@ function Index() {
             })
         : Promise.resolve({ filler: "" });
 
-      // Reunião dormindo: o wake-word por regex não bateu aqui. Mas o n8n tem uma IA
-      // classificadora nesse caminho — se ELA entender que a fala era pro Naner (ex.:
-      // a transcrição saiu "nana" em vez de "Nâner"), o webhook devolve texto em vez
-      // de vazio. Vazio = conversa da sala (ignora); com texto = resgate, fala e acorda.
+      // Reunião dormindo: o nome não apareceu na fala. Só grava contexto e sai, SEM
+      // acionar IA nenhuma — fala ambiente é constante e classificar cada frase seria
+      // uma chamada de LLM por frase, sem retorno. A IA só entra quando o nome É
+      // detectado, pra julgar se foi chamado ou só menção.
       if (!willSpeak) {
         const j: any = await nanerP;
-        const resgate = (j?.output ?? j?.text ?? j?.message ?? "").toString().trim();
-        if (!resgate) {
-          log(`(reuniao DORMINDO) fala da sala, sem resposta: ${safeStringify(j)}`);
-          return;
-        }
-        log(`IA classificadora RESGATOU a fala (wake-word não bateu no regex) → falando`, "ok");
-        meetingActiveRef.current = true;
-        setMeetingActive(true);
-        try {
-          await speakAndWait(resgate);
-        } catch (error) {
-          logError("erro ao falar resgate da classificadora", error);
-        }
+        log(`(reuniao DORMINDO) fala da sala, só contexto: ${safeStringify(j)}`);
         return;
       }
 
@@ -2469,9 +2489,19 @@ function Index() {
 
         // CASO 1 — DORMINDO + wake word (e não é um adeus a outra pessoa) → ATIVO.
         if (!isActive && hasWake && !hasEnd) {
+          // O nome apareceu, mas isso NÃO quer dizer que chamaram ele: pode ser menção
+          // ("o Nâner está muito bom né pessoal"). A IA confirma a intenção ANTES de
+          // acordar — antes porque o filler dispara junto com handleSend, e um filler
+          // numa menção ficaria no vácuo.
+          const querFalar = await classificarChamada(t);
+          if (!querFalar) {
+            log(`Reunião: nome citado, mas era MENÇÃO — segue dormindo: "${t}"`, "ok");
+            await handleSend(t, { responder: false }); // grava contexto, não fala
+            return;
+          }
           meetingActiveRef.current = true;
           setMeetingActive(true);
-          log(`Reunião: → ATIVO (wake word detectada: "${t}")`, "ok");
+          log(`Reunião: → ATIVO (chamado confirmado pela IA: "${t}")`, "ok");
           // Veio pergunta junto com o nome? Tira saudação/nome e vê se sobra conteúdo.
           const resto = low
             .replace(/\b(ola|oi|ei|hey|alo|e ai|eai|opa|fala)\b/g, " ")
@@ -2506,7 +2536,7 @@ function Index() {
       // Modo "always" (responde tudo): fluxo padrão.
       await handleSend(t);
     },
-    [handleSend, log, speakAndWait, logError],
+    [handleSend, log, speakAndWait, logError, classificarChamada],
   );
 
   useEffect(() => {

@@ -281,26 +281,13 @@ function MeetAvatar() {
           return { output: "" };
         });
 
-      // responder=false significa que o wake-word por regex NÃO bateu aqui no front.
-      // Mas o n8n tem uma IA classificadora nesse caminho: se ELA entender que a fala
-      // era pro Naner (ex.: a transcrição saiu "nana" em vez de "Nâner"), o webhook
-      // devolve texto em vez de vazio. Então: resposta vazia = era conversa da sala
-      // (ignora); resposta com texto = a IA resgatou, fala e acorda.
+      // responder=false = o nome não apareceu na fala. Só grava contexto e sai, SEM
+      // acionar IA nenhuma: fala ambiente de reunião é constante, e classificar cada
+      // uma seria uma chamada de LLM por frase, sem retorno. A IA só entra quando o
+      // nome É detectado, pra julgar se foi chamado ou só menção (ver routeSegment).
       if (!responder) {
         const j: any = await nanerP;
-        const resgate = (j?.output ?? j?.text ?? j?.message ?? "").toString().trim();
-        if (!resgate) {
-          log(`(dormindo) fala da sala, sem resposta: ${JSON.stringify(j)?.slice(0, 200)}`);
-          return;
-        }
-        log(`IA classificadora RESGATOU a fala (wake-word não bateu no regex) → falando`, "ok");
-        meetingActiveRef.current = true;
-        setActive(true);
-        try {
-          await speakAndWait(resgate);
-        } catch (e: any) {
-          log(`erro ao falar resgate: ${e?.message ?? e}`, "err");
-        }
+        log(`(dormindo) fala da sala, só contexto: ${JSON.stringify(j)?.slice(0, 200)}`);
         return;
       }
 
