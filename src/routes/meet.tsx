@@ -70,6 +70,9 @@ type Cfg = {
   authToken: string; // token de login (repassado ao getSessionToken)
   hotSwapAfterSec: number; // intervalo (s) entre reconexões automáticas (hot-swap)
   reconnectGreeting: string; // fala ao reconectar no hot-swap (vazio = não fala nada)
+  // sessionId gerado pelo CONSOLE e passado na URL. O console precisa conhecê-lo pra
+  // apagar o histórico desta sessão ao remover o avatar. Vazio (URL antiga) = gera aqui.
+  meetSessionId: string;
 };
 
 function readConfig(): Cfg {
@@ -93,6 +96,7 @@ function readConfig(): Cfg {
     authToken: q.get("auth") ?? "",
     hotSwapAfterSec: Number(q.get("hs")) || HOT_SWAP_AFTER_SEC_DEFAULT,
     reconnectGreeting: q.get("rg") ?? "",
+    meetSessionId: q.get("msid") ?? "",
   };
 }
 
@@ -723,14 +727,22 @@ function MeetAvatar() {
     const isDebug = new URLSearchParams(window.location.search).get("debug") === "1";
     debugRef.current = isDebug;
 
-    // sessionId único desta sessão de /meet (gerado uma vez, estável enquanto durar).
+    // sessionId único desta sessão de /meet (estável enquanto ela durar, inclusive
+    // através dos hot-swaps). PREFERE o id que o console mandou na URL (msid): assim
+    // o console conhece a chave e consegue apagar o histórico ao remover o avatar.
+    // Se não vier (URL antiga/deploy defasado), gera aqui como antes.
     if (!meetSessionIdRef.current) {
-      const rnd =
-        typeof crypto !== "undefined" && crypto.randomUUID
-          ? crypto.randomUUID()
-          : `${Date.now()}-${Math.round(Number.MAX_SAFE_INTEGER * 0.5)}`;
-      meetSessionIdRef.current = `meet-${cfg.sid}-${rnd}`;
-      log(`sessionId desta sessão: ${meetSessionIdRef.current}`);
+      if (cfg.meetSessionId) {
+        meetSessionIdRef.current = cfg.meetSessionId;
+        log(`sessionId desta sessão (veio do console): ${meetSessionIdRef.current}`);
+      } else {
+        const rnd =
+          typeof crypto !== "undefined" && crypto.randomUUID
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.round(Number.MAX_SAFE_INTEGER * 0.5)}`;
+        meetSessionIdRef.current = `meet-${cfg.sid}-${rnd}`;
+        log(`sessionId desta sessão (gerado localmente): ${meetSessionIdRef.current}`);
+      }
     }
 
     // apiKey NÃO é obrigatória na URL: o server function getSessionToken cai no

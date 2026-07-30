@@ -231,7 +231,7 @@ function loadMode(): Mode {
 
 // Monta a URL pública /meet com a config do MODO escolhido pra subir no Meet.
 // Cada modo usa o webhook n8n do seu próprio modo; o filler é global.
-function buildMeetUrl(s: Settings, debug: boolean, authToken = ""): string {
+function buildMeetUrl(s: Settings, debug: boolean, authToken = "", meetSessionId = ""): string {
   const m = s.meetLaunchMode;
   const cfg = s.meetConfigs[m];
   const wr =
@@ -260,6 +260,10 @@ function buildMeetUrl(s: Settings, debug: boolean, authToken = ""): string {
     // console (Camada 1/2). Sem isso o /meet sobe e nunca troca de sessão sozinho.
     hs: String(s.hotSwapAfterSec || HOT_SWAP_AFTER_SEC_DEFAULT),
     rg: cfg.reconnectGreeting,
+    // sessionId da sessão do Meet, gerado AQUI no console (não mais dentro do /meet).
+    // Motivo: ao remover o avatar, o console precisa saber qual sessão limpar no banco
+    // — e ele não teria como saber um id gerado dentro do browser do Recall.
+    msid: meetSessionId,
   });
   return `${base}/meet?${qs.toString()}`;
 }
@@ -858,6 +862,9 @@ function Index() {
   const botIdRef = useRef<string | null>(null);
   const recallSeenCountRef = useRef(0);
   const recallPollTimerRef = useRef<number | null>(null);
+  // sessionId da sessão do Meet em andamento (gerado ao criar o bot). Guardado pra
+  // poder apagar o histórico dessa sessão no banco quando o avatar for removido.
+  const meetSessionIdRef = useRef<string>("");
 
   // ── bento free-form layout ──
   type PanelRect = { x: number; y: number; w: number; h: number };
@@ -2578,7 +2585,13 @@ function Index() {
     const launchMode = s.meetLaunchMode;
     setBotStatus(`entrando (${launchMode})…`);
     avatarInMeetRef.current = true; // a página /meet fala por si; suprime fala local
-    const outputMediaUrl = buildMeetUrl(s, s.meetDebug, authTokenRef.current);
+    // Gera aqui o sessionId desta sessão do Meet e guarda: é a chave que o
+    // "Remover avatar" usa pra apagar o histórico dessa sessão no banco.
+    const meetSid = `meet-${launchMode}-${
+      typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(Date.now())
+    }`;
+    meetSessionIdRef.current = meetSid;
+    const outputMediaUrl = buildMeetUrl(s, s.meetDebug, authTokenRef.current, meetSid);
     log(`[CAMADA 3] Recall POST /bot/ (modo=${launchMode}) com output_media → ${s.avatarBaseUrl.replace(/\/+$/, "")}/meet`);
     try {
       const r: any = await callCreateBot({
@@ -2647,6 +2660,26 @@ function Index() {
       log(`Recall leave HTTP ${r.status}\n${r.body}`, r.ok ? "ok" : "err");
     } catch (e) {
       logError("Recall leaveBot falhou", e);
+    }
+    // LIMPEZA: apaga o histórico desta sessão do Meet no banco. Sem isso as linhas
+    // acumulam pra sempre (cada frase ouvida na sala gera uma). Escopado ao
+    // sessionId desta sessão — nunca apaga histórico de outra reunião.
+    const sid = meetSessionIdRef.current;
+    if (sid) {
+      try {
+        const limparUrl = s.webhookReuniao.replace(/\/[^/]*$/, "/naner-limpar-sessao");
+        const lr = await fetch(limparUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: sid }),
+        });
+        const lj: any = await lr.json().catch(() => ({}));
+        log(`Limpeza da sessão ${sid}: ${lj?.historico ?? "?"} linha(s) de histórico apagada(s)`, "ok");
+      } catch (e) {
+        // Falha na limpeza não pode travar a saída do Meet — só registra.
+        logError("limpeza da sessão do Meet falhou (dados seguem no banco)", e);
+      }
+      meetSessionIdRef.current = "";
     }
     setBotId(null);
     botIdRef.current = null;
