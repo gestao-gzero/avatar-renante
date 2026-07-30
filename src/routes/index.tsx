@@ -48,7 +48,7 @@ const MEET_BOT_NAME = "Naner";
 // PROPOSITALMENTE fora da lista: "renan" e "renante". O Renan de verdade está na
 // sala — se o nome dele acordasse o avatar, chamar a pessoa acordaria o bot junto.
 const NANER_WAKE =
-  "naner|nanner|nanar|naneir|nander|nanor|nener|nane|raner|ranner|daner|danner|taner|tanner|zaner|vaner";
+  "naner|nanner|nanar|naneir|nander|nanor|nener|nane|nana|nanan|nanam|nanna|nanah|nanae|raner|ranner|daner|danner|taner|tanner|zaner|vaner";
 // URL pública oficial do avatar. É ELA que o bot do Recall abre pra renderizar o
 // /meet dentro da reunião — se apontar pra um deploy velho, o Meet roda código antigo.
 const AVATAR_BASE_URL_DEFAULT = "https://renante.gravidadezero.ai";
@@ -2336,10 +2336,25 @@ function Index() {
             })
         : Promise.resolve({ filler: "" });
 
-      // Se não vai falar (Reunião dormindo), só espera o webhook pra logar e sai.
+      // Reunião dormindo: o wake-word por regex não bateu aqui. Mas o n8n tem uma IA
+      // classificadora nesse caminho — se ELA entender que a fala era pro Naner (ex.:
+      // a transcrição saiu "nana" em vez de "Nâner"), o webhook devolve texto em vez
+      // de vazio. Vazio = conversa da sala (ignora); com texto = resgate, fala e acorda.
       if (!willSpeak) {
         const j: any = await nanerP;
-        log(`(reuniao DORMINDO) resposta ignorada: ${safeStringify(j)}`);
+        const resgate = (j?.output ?? j?.text ?? j?.message ?? "").toString().trim();
+        if (!resgate) {
+          log(`(reuniao DORMINDO) fala da sala, sem resposta: ${safeStringify(j)}`);
+          return;
+        }
+        log(`IA classificadora RESGATOU a fala (wake-word não bateu no regex) → falando`, "ok");
+        meetingActiveRef.current = true;
+        setMeetingActive(true);
+        try {
+          await speakAndWait(resgate);
+        } catch (error) {
+          logError("erro ao falar resgate da classificadora", error);
+        }
         return;
       }
 

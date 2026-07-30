@@ -45,7 +45,7 @@ const HOT_SWAP_MAX_DEFER_MS = 20_000;
 // PROPOSITALMENTE fora da lista: "renan" e "renante". O Renan de verdade está na
 // sala — se o nome dele acordasse o avatar, chamar a pessoa acordaria o bot junto.
 const NANER_WAKE =
-  "naner|nanner|nanar|naneir|nander|nanor|nener|nane|raner|ranner|daner|danner|taner|tanner|zaner|vaner";
+  "naner|nanner|nanar|naneir|nander|nanor|nener|nane|nana|nanan|nanam|nanna|nanah|nanae|raner|ranner|daner|danner|taner|tanner|zaner|vaner";
 const WAKE_RE = new RegExp(`\\b(${NANER_WAKE})\\b`);
 const END_RE = new RegExp(
   `\\b(desligar|desliga|pode desligar|pode parar|pode encerrar|encerra|encerrar|para (${NANER_WAKE})|chega|tchau|pode ir|era so isso|obrigado por enquanto|dispensar|ja chega|ja deu)\\b`,
@@ -243,10 +243,26 @@ function MeetAvatar() {
           return { output: "" };
         });
 
-      // Só fala quando está ATIVO (responder=true). Senão é só contexto de ambiente.
+      // responder=false significa que o wake-word por regex NÃO bateu aqui no front.
+      // Mas o n8n tem uma IA classificadora nesse caminho: se ELA entender que a fala
+      // era pro Naner (ex.: a transcrição saiu "nana" em vez de "Nâner"), o webhook
+      // devolve texto em vez de vazio. Então: resposta vazia = era conversa da sala
+      // (ignora); resposta com texto = a IA resgatou, fala e acorda.
       if (!responder) {
         const j: any = await nanerP;
-        log(`(dormindo) resposta ignorada: ${JSON.stringify(j)?.slice(0, 200)}`);
+        const resgate = (j?.output ?? j?.text ?? j?.message ?? "").toString().trim();
+        if (!resgate) {
+          log(`(dormindo) fala da sala, sem resposta: ${JSON.stringify(j)?.slice(0, 200)}`);
+          return;
+        }
+        log(`IA classificadora RESGATOU a fala (wake-word não bateu no regex) → falando`, "ok");
+        meetingActiveRef.current = true;
+        setActive(true);
+        try {
+          await speakAndWait(resgate);
+        } catch (e: any) {
+          log(`erro ao falar resgate: ${e?.message ?? e}`, "err");
+        }
         return;
       }
 
