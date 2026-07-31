@@ -37,6 +37,16 @@ const RECALL_TRANSCRIPT_WS = "wss://meeting-data.bot.recall.ai/api/v1/transcript
 const HOT_SWAP_AFTER_SEC_DEFAULT = 270;
 const HOT_SWAP_MIN_SEC = 20;
 const HOT_SWAP_MAX_DEFER_MS = 20_000;
+// Teto pra nova sessão do hot-swap ficar pronta (SESSION_STREAM_READY). Sem isto,
+// se o evento nunca chegasse, o swap ficava "em andamento" pra sempre: nenhum
+// hot-swap novo era agendado e a sessão atual morria no cap de 5 min → tela preta.
+const HOT_SWAP_PROMOTE_TIMEOUT_MS = 30_000;
+// Espera antes de encerrar a sessão ANTIGA depois de promover a nova. O <video> é
+// compartilhado: derrubar a antiga no mesmo instante em que a nova foi anexada pode
+// limpar o srcObject recém-setado e deixar a tela preta.
+const OLD_SESSION_STOP_DELAY_MS = 2_000;
+// Watchdog: de quanto em quanto tempo conferir se o vídeo está realmente rodando.
+const VIDEO_WATCHDOG_MS = 10_000;
 
 // Wake-word do avatar (Naner, pronúncia "Nâner") + variações que o reconhecimento
 // de voz costuma devolver no lugar dela. Tem que ser IGUAL à lista do app
@@ -532,8 +542,25 @@ function MeetAvatar() {
       }
       await new Promise((r) => window.setTimeout(r, 400));
     }
+    // Não desiste: esta página roda no Chromium headless do Recall, onde NÃO existe
+    // ninguém pra clicar no botão de fallback. Antes, ao esgotar as tentativas, ficava
+    // um botão inútil sobre a tela preta pra sempre. Agora mostra o botão (caso alguém
+    // esteja vendo pelo navegador) e segue tentando em background — o watchdog abaixo
+    // também tenta reanexar o stream se o problema for a origem, não o autoplay.
     setNeedsGesture(true);
-  }, []);
+    log("play() não engatou em ~5s — seguindo tentando em background", "err");
+    window.setTimeout(() => {
+      const vv = videoRef.current;
+      if (vv && vv.paused) void tryPlayRef.current?.();
+    }, 3000);
+  }, [log]);
+
+  // Ref pro próprio tryPlay: permite a re-tentativa recursiva acima sem criar
+  // dependência circular no useCallback.
+  const tryPlayRef = useRef<(() => Promise<void>) | null>(null);
+  useEffect(() => {
+    tryPlayRef.current = tryPlay;
+  }, [tryPlay]);
 
   // Listeners comuns a QUALQUER sessão (inicial ou pré-aquecida no hot-swap).
   // SESSION_STREAM_READY fica de fora: cada chamador trata o "stream pronto" à
@@ -644,8 +671,27 @@ function MeetAvatar() {
       const newSession = new LiveAvatarSession(tokenResult.session_token, { voiceChat: false });
       registerSessionEvents(newSession);
 
+      // TRAVA DE SEGURANÇA: se SESSION_STREAM_READY nunca chegar, o swap ficaria
+      // "em andamento" pra sempre — nenhum hot-swap novo seria agendado e a sessão
+      // atual morreria no cap de 5 min, deixando a tela preta. Descarta e reagenda.
+      let promovido = false;
+      const promoteTimeout = window.setTimeout(() => {
+        if (promovido) return;
+        log("HOT-SWAP: nova sessão não ficou pronta a tempo — descartando e reagendando", "err");
+        try {
+          newSession.off(SessionEvent.SESSION_STREAM_READY, promote);
+        } catch {}
+        try {
+          void newSession.stop();
+        } catch {}
+        swapInProgressRef.current = false;
+        scheduleHotSwap(); // a sessão ATUAL segue no ar; tenta de novo no próximo ciclo
+      }, HOT_SWAP_PROMOTE_TIMEOUT_MS);
+
       // Quando o stream da NOVA sessão estiver pronto: promove e descarta a antiga.
       const promote = () => {
+        promovido = true;
+        window.clearTimeout(promoteTimeout);
         newSession.off(SessionEvent.SESSION_STREAM_READY, promote);
         const cutElapsedMs = pending ? Date.now() - pending.startedAt : 0;
         try {
@@ -655,10 +701,28 @@ function MeetAvatar() {
         }
         sessionRef.current = newSession;
         connectedRef.current = true;
-        log("HOT-SWAP: troca concluída ✅ (encerrando sessão antiga)", "ok");
-        try {
-          void oldSession.stop();
-        } catch {}
+        log("HOT-SWAP: troca concluída ✅", "ok");
+        // Encerra a ANTIGA com atraso: o <video> é compartilhado, e derrubar a antiga
+        // no mesmo instante pode limpar o srcObject que a nova acabou de setar
+        // (causa provável da tela preta logo depois de uma troca). Depois de parar,
+        // confere se o vídeo sobreviveu e reanexa a nova se tiver ficado órfão.
+        window.setTimeout(() => {
+          try {
+            void oldSession.stop();
+          } catch {}
+          window.setTimeout(() => {
+            const v = videoRef.current;
+            if (v && !v.srcObject) {
+              log("HOT-SWAP: vídeo ficou sem stream após parar a antiga — reanexando", "err");
+              try {
+                newSession.attach(v);
+                void tryPlay();
+              } catch (e: any) {
+                log(`HOT-SWAP: reanexar falhou: ${e?.message ?? e}`, "err");
+              }
+            }
+          }, 400);
+        }, OLD_SESSION_STOP_DELAY_MS);
         swapInProgressRef.current = false;
         void tryPlay();
         scheduleHotSwap(); // reagenda o próximo ciclo
@@ -706,6 +770,59 @@ function MeetAvatar() {
   useEffect(() => {
     prewarmSwapRef.current = prewarmAndSwap;
   }, [prewarmAndSwap]);
+
+  // ---- WATCHDOG DE VÍDEO ----
+  // Rede de segurança geral pra "tela preta"/"travou" dentro do Meet. Nada aqui
+  // depende de saber a CAUSA: se o vídeo parou de rodar, tenta recuperar em degraus.
+  // Sem isto, qualquer falha de stream deixava o bot transmitindo tela preta até
+  // alguém perceber e remover o avatar na mão.
+  useEffect(() => {
+    let falhasSeguidas = 0;
+    const id = window.setInterval(() => {
+      const v = videoRef.current;
+      const sess = sessionRef.current;
+      if (!v || !sess || !connectedRef.current) return; // ainda subindo: não é falha
+      if (swapInProgressRef.current) return; // troca em andamento: instabilidade esperada
+
+      // Vídeo saudável = tem stream, não está pausado e já tem dados decodificados.
+      const saudavel = !!v.srcObject && !v.paused && v.readyState >= 2;
+      if (saudavel) {
+        if (falhasSeguidas > 0) log("watchdog: vídeo voltou ao normal", "ok");
+        falhasSeguidas = 0;
+        return;
+      }
+
+      falhasSeguidas++;
+      log(
+        `watchdog: vídeo parado (srcObject=${!!v.srcObject} paused=${v.paused} readyState=${v.readyState}) — tentativa ${falhasSeguidas}`,
+        "err",
+      );
+
+      // Degrau 1 e 2: reanexar a sessão atual e forçar play (resolve srcObject perdido
+      // e autoplay que engasgou).
+      if (falhasSeguidas <= 2) {
+        try {
+          sess.attach(v);
+        } catch (e: any) {
+          log(`watchdog: attach falhou: ${e?.message ?? e}`, "err");
+        }
+        void tryPlay();
+        return;
+      }
+
+      // Degrau 3: reanexar não resolveu — a sessão em si provavelmente morreu.
+      // Força um hot-swap (cria sessão nova inteira). É o mesmo caminho já testado
+      // da renovação automática, só que disparado por falha em vez de por tempo.
+      log("watchdog: reanexar não resolveu — forçando troca de sessão", "err");
+      falhasSeguidas = 0;
+      if (hotSwapTimerRef.current !== null) {
+        window.clearTimeout(hotSwapTimerRef.current);
+        hotSwapTimerRef.current = null;
+      }
+      prewarmSwapRef.current?.();
+    }, VIDEO_WATCHDOG_MS);
+    return () => window.clearInterval(id);
+  }, [log, tryPlay]);
 
   // ---- bootstrap ----
   useEffect(() => {
