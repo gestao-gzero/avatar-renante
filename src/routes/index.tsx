@@ -48,7 +48,7 @@ const MEET_BOT_NAME = "Naner";
 // PROPOSITALMENTE fora da lista: "renan" e "renante". O Renan de verdade está na
 // sala — se o nome dele acordasse o avatar, chamar a pessoa acordaria o bot junto.
 const NANER_WAKE =
-  "naner|nanner|nanar|naneir|nander|nanor|nener|nane|nana|nanan|nanam|nanna|nanah|nanae|nani|nany|nanni|nene|nenem|nenen|neneh|nenee|nanei|nanne|raner|ranner|daner|danner|taner|tanner|zaner|vaner";
+  "naner|nanner|nanar|naneir|nander|nanor|nener|nane|nana|nanan|nanam|nanna|nanah|nanae|nani|nany|nanni|nene|nenem|nenen|neneh|nenee|nanei|nanne|nada|namir|namyr|namer|raner|ranner|daner|danner|taner|tanner|zaner|vaner";
 // URL pública oficial do avatar. É ELA que o bot do Recall abre pra renderizar o
 // /meet dentro da reunião — se apontar pra um deploy velho, o Meet roda código antigo.
 const AVATAR_BASE_URL_DEFAULT = "https://renante.gravidadezero.ai";

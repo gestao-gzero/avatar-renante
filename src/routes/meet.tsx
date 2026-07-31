@@ -45,7 +45,7 @@ const HOT_SWAP_MAX_DEFER_MS = 20_000;
 // PROPOSITALMENTE fora da lista: "renan" e "renante". O Renan de verdade está na
 // sala — se o nome dele acordasse o avatar, chamar a pessoa acordaria o bot junto.
 const NANER_WAKE =
-  "naner|nanner|nanar|naneir|nander|nanor|nener|nane|nana|nanan|nanam|nanna|nanah|nanae|nani|nany|nanni|nene|nenem|nenen|neneh|nenee|nanei|nanne|raner|ranner|daner|danner|taner|tanner|zaner|vaner";
+  "naner|nanner|nanar|naneir|nander|nanor|nener|nane|nana|nanan|nanam|nanna|nanah|nanae|nani|nany|nanni|nene|nenem|nenen|neneh|nenee|nanei|nanne|nada|namir|namyr|namer|raner|ranner|daner|danner|taner|tanner|zaner|vaner";
 const WAKE_RE = new RegExp(`\\b(${NANER_WAKE})\\b`);
 const END_RE = new RegExp(
   `\\b(desligar|desliga|pode desligar|pode parar|pode encerrar|encerra|encerrar|para (${NANER_WAKE})|chega|tchau|pode ir|era so isso|obrigado por enquanto|dispensar|ja chega|ja deu)\\b`,
