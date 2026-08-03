@@ -59,7 +59,15 @@ export default function Chamada() {
   const [turn, setTurn] = useState<TurnState>("idle");
   const [muted, setMuted] = useState(true);
   const [camOn, setCamOn] = useState(false);
-  const [controlsVisible, setControlsVisible] = useState(true);
+  const [clock, setClock] = useState("");
+  // Código no estilo do Meet, só estético. Fixo por carregamento da página.
+  const [meetingCode] = useState(() => {
+    const pick = (n: number) =>
+      Array.from({ length: n }, () => "abcdefghijkmnopqrstuvwxyz"[(Math.random() * 25) | 0]).join(
+        "",
+      );
+    return `${pick(3)}-${pick(4)}-${pick(3)}`;
+  });
   // Só aparece quando a conexão cai de verdade — o hot-swap normal é invisível.
   const [reconnecting, setReconnecting] = useState(false);
   const [fatalError, setFatalError] = useState<string | null>(null);
@@ -143,6 +151,34 @@ export default function Chamada() {
     },
     [log],
   );
+
+  // ===== permissões pedidas já na abertura da página =====
+  // Num evento, o pop-up do navegador aparecendo no telão bem na hora de entrar na
+  // chamada é o pior momento possível. Pedindo aqui, o operador resolve isso com a
+  // tela ainda parada, e o clique em "entrar" já encontra tudo autorizado.
+  //
+  // Microfone e câmera são pedidos JUNTOS para o navegador mostrar um pop-up só. Se
+  // a máquina não tiver câmera, o pedido conjunto falha inteiro (NotFoundError) e
+  // levaria o microfone junto — por isso o segundo pedido, só de áudio.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+        stream.getTracks().forEach((t) => t.stop());
+        log("permissão de microfone e câmera concedida na abertura", "ok");
+        return;
+      } catch (e) {
+        log(`pedido conjunto de microfone e câmera falhou (${(e as Error)?.name ?? "erro"})`);
+      }
+      try {
+        const audioOnly = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioOnly.getTracks().forEach((t) => t.stop());
+        log("permissão de microfone concedida (sem câmera)", "ok");
+      } catch (e) {
+        logError("permissão de microfone negada na abertura", e);
+      }
+    })();
+  }, [log, logError]);
 
   // ===== boot: autenticação + configuração salva =====
   useEffect(() => {
@@ -658,7 +694,7 @@ export default function Chamada() {
       } catch {}
       recognitionRef.current = null;
     };
-  }, [routeInterim, routeFinal, maybeStartListening, logError]);
+  }, [routeInterim, routeFinal, maybeStartListening, log, logError]);
 
   // ===== Deepgram =====
   const stopDeepgram = useCallback((opts?: { graceful?: boolean }) => {
@@ -1136,29 +1172,14 @@ export default function Chamada() {
     }
   }, [camOn, phase]);
 
-  // ===== controles somem sozinhos, como numa chamada de verdade =====
+  // ===== relógio da barra superior =====
   useEffect(() => {
-    if (phase !== "live") {
-      setControlsVisible(true);
-      return;
-    }
-    let timer: number | null = null;
-    const show = () => {
-      setControlsVisible(true);
-      if (timer !== null) window.clearTimeout(timer);
-      timer = window.setTimeout(() => setControlsVisible(false), 3500);
-    };
-    show();
-    window.addEventListener("mousemove", show);
-    window.addEventListener("touchstart", show);
-    window.addEventListener("keydown", show);
-    return () => {
-      if (timer !== null) window.clearTimeout(timer);
-      window.removeEventListener("mousemove", show);
-      window.removeEventListener("touchstart", show);
-      window.removeEventListener("keydown", show);
-    };
-  }, [phase]);
+    const tick = () =>
+      setClock(new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }));
+    tick();
+    const id = window.setInterval(tick, 20_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   // ===== limpeza ao sair da rota =====
   useEffect(() => {
@@ -1219,202 +1240,208 @@ export default function Chamada() {
   }
 
   const isLive = phase === "live";
+  const isConnecting = phase === "connecting";
 
   return (
-    <div className="fixed inset-0 select-none overflow-hidden bg-black text-white">
-      {/* ===== Avatar em tela cheia — dois slots que se cruzam no hot-swap ===== */}
-      <video
-        ref={videoARef}
-        autoPlay
-        playsInline
-        className="absolute inset-0 h-full w-full object-cover transition-opacity duration-500"
-        style={{ opacity: isLive && activeSlot === "a" ? 1 : 0 }}
-      />
-      <video
-        ref={videoBRef}
-        autoPlay
-        playsInline
-        className="absolute inset-0 h-full w-full object-cover transition-opacity duration-500"
-        style={{ opacity: isLive && activeSlot === "b" ? 1 : 0 }}
-      />
+    <div className="fixed inset-0 flex select-none flex-col overflow-hidden bg-[#131314] text-[#e8eaed]">
+      {/* ===== Barra superior: relógio e código, como no Meet ===== */}
+      <div className="flex h-12 shrink-0 items-center gap-3 px-6 text-[15px]">
+        <span>{clock}</span>
+        <span className="text-white/25">|</span>
+        <span className="text-white/90">{meetingCode}</span>
+        <IconInfo />
+        {isConnecting && <span className="ml-1 text-sm text-white/45">Conectando…</span>}
+        {fatalError && !isConnecting && (
+          <span className="ml-1 truncate text-sm text-red-300">{fatalError}</span>
+        )}
+      </div>
 
-      {/* Pré-chamada: o poster do avatar cobre a tela enquanto ninguém entrou.
-          Também é ele que aparece durante o "connecting", cobrindo o quadro preto. */}
-      {!isLive && (
+      {/* ===== Palco: o quadro do participante ===== */}
+      <div className="min-h-0 flex-1 px-4">
+        {/* Contorno azul em quem está falando — o Meet faz isso, e é o sinal que
+            diferencia "chamada" de "vídeo em tela cheia". */}
         <div
-          className="absolute inset-0 bg-cover bg-center"
-          style={{
-            backgroundImage: poster ? `url(${poster})` : undefined,
-            backgroundColor: "#0a0c0f",
-            filter: "blur(2px) brightness(.55)",
-          }}
-        />
-      )}
-
-      {/* ===== Pré-chamada ===== */}
-      {(phase === "prejoin" || phase === "connecting") && (
-        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-6 px-6 text-center">
-          <div className="h-28 w-28 overflow-hidden rounded-full border border-white/20 bg-black/40 shadow-2xl">
-            {poster ? <img src={poster} alt="" className="h-full w-full object-cover" /> : null}
-          </div>
-          <div>
-            <p className="text-2xl font-semibold">Renan</p>
-            <p className="mt-1 text-sm text-white/60">
-              {phase === "connecting" ? "Conectando…" : "Pronto para começar"}
-            </p>
-          </div>
-
-          {fatalError && (
-            <p className="max-w-sm rounded-lg border border-red-400/30 bg-red-500/10 px-4 py-2 text-sm text-red-200">
-              {fatalError}
-            </p>
-          )}
-
-          <button
-            onClick={() => void joinCall()}
-            disabled={phase === "connecting"}
-            className="rounded-full bg-white px-8 py-3 text-base font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-50"
-          >
-            {phase === "connecting" ? "Entrando…" : "Entrar agora"}
-          </button>
-        </div>
-      )}
-
-      {/* ===== Nome, como numa chamada de verdade ===== */}
-      {isLive && (
-        <div
-          className={`absolute bottom-5 left-5 z-20 rounded-md bg-black/45 px-3 py-1.5 text-sm font-medium backdrop-blur-sm transition-opacity duration-300 ${
-            controlsVisible ? "opacity-100" : "opacity-0"
+          className={`relative h-full w-full overflow-hidden rounded-2xl bg-black outline-none ring-inset transition-shadow duration-200 ${
+            isLive && turn === "speaking" ? "ring-[3px] ring-[#8ab4f8]" : "ring-0"
           }`}
         >
-          Renan
-        </div>
-      )}
+          {/* A foto do avatar fica SEMPRE no fundo, sem escurecer e sem nada por cima.
+              Antes de conectar é ela que se vê — como se ele já estivesse na sala. O
+              vídeo entra por cima só quando existe stream de verdade. */}
+          {poster && (
+            <img
+              src={poster}
+              alt=""
+              className="absolute inset-0 h-full w-full object-cover"
+              draggable={false}
+            />
+          )}
 
-      {/* Anel de "falando" — o mesmo sinal que o Meet dá, e que faz a tela ler
-          como chamada em vez de vídeo em tela cheia. */}
-      {isLive && turn === "speaking" && (
-        <div className="pointer-events-none absolute inset-0 z-10 ring-4 ring-inset ring-sky-400/70 transition-opacity duration-300" />
-      )}
-
-      {/* Queda real de conexão (o hot-swap normal nunca chega aqui). */}
-      {isLive && reconnecting && (
-        <div className="absolute left-1/2 top-6 z-30 -translate-x-1/2 rounded-full bg-black/70 px-4 py-2 text-sm backdrop-blur">
-          Reconectando…
-        </div>
-      )}
-
-      {/* ===== Self-view ===== */}
-      {isLive && camOn && (
-        <div className="absolute bottom-24 right-5 z-20 h-32 w-52 overflow-hidden rounded-xl border border-white/20 bg-black shadow-2xl">
+          {/* Dois slots de vídeo que se cruzam no hot-swap (troca invisível). */}
           <video
-            ref={camVideoRef}
+            ref={videoARef}
             autoPlay
             playsInline
-            muted
-            className="h-full w-full object-cover [transform:scaleX(-1)]"
+            className="absolute inset-0 h-full w-full object-cover transition-opacity duration-500"
+            style={{ opacity: isLive && activeSlot === "a" ? 1 : 0 }}
           />
-        </div>
-      )}
+          <video
+            ref={videoBRef}
+            autoPlay
+            playsInline
+            className="absolute inset-0 h-full w-full object-cover transition-opacity duration-500"
+            style={{ opacity: isLive && activeSlot === "b" ? 1 : 0 }}
+          />
 
-      {/* ===== Diagnóstico (só com ?debug=1 na URL) =====
-          Não aparece no uso normal. Existe porque, sem log na tela, "ele não está me
-          escutando" é indistinguível de meia dúzia de causas diferentes. */}
-      {debugOn && (
-        <div className="absolute left-3 top-3 z-40 max-h-[70vh] w-[min(560px,46vw)] overflow-y-auto rounded-lg border border-white/15 bg-black/85 p-3 font-mono text-[10px] leading-relaxed text-white/80 backdrop-blur">
-          <div className="mb-1.5 flex items-center justify-between border-b border-white/10 pb-1.5">
-            <span className="font-semibold uppercase tracking-wider text-white/50">
-              diagnóstico
-            </span>
-            <span className="text-white/40">
-              {settingsRef.current?.sttEngine ?? "—"} · {modeRef.current} ·{" "}
-              {settingsRef.current?.meetConfigs[modeRef.current]?.behavior ?? "—"} ·{" "}
-              {muted ? "MUDO" : "ouvindo"}
-            </span>
+          {/* Nome do participante, no canto — igual ao Meet. */}
+          <div className="absolute bottom-3 left-4 text-[15px] text-white drop-shadow-[0_1px_3px_rgba(0,0,0,.8)]">
+            Renan
           </div>
-          {debugLines.length === 0 ? (
-            <div className="text-white/40">sem eventos ainda…</div>
-          ) : (
-            debugLines.map((l, i) => (
-              <div key={i} className="whitespace-pre-wrap break-words">
-                {l}
+
+          {/* Queda real de conexão (o hot-swap normal nunca chega aqui). */}
+          {isLive && reconnecting && (
+            <div className="absolute left-1/2 top-4 -translate-x-1/2 rounded-full bg-black/70 px-4 py-1.5 text-sm backdrop-blur">
+              Reconectando…
+            </div>
+          )}
+
+          {/* Self-view, como o quadradinho do Meet. */}
+          {camOn && (
+            <div className="absolute bottom-3 right-3 h-32 w-52 overflow-hidden rounded-xl bg-[#3c4043] shadow-lg">
+              <video
+                ref={camVideoRef}
+                autoPlay
+                playsInline
+                muted
+                className="h-full w-full object-cover [transform:scaleX(-1)]"
+              />
+            </div>
+          )}
+
+          {/* Diagnóstico (só com ?debug=1 na URL) — nunca aparece no uso normal. */}
+          {debugOn && (
+            <div className="absolute left-3 top-3 max-h-[70vh] w-[min(560px,46vw)] overflow-y-auto rounded-lg border border-white/15 bg-black/85 p-3 font-mono text-[10px] leading-relaxed text-white/80 backdrop-blur">
+              <div className="mb-1.5 flex items-center justify-between border-b border-white/10 pb-1.5">
+                <span className="font-semibold uppercase tracking-wider text-white/50">
+                  diagnóstico
+                </span>
+                <span className="text-white/40">
+                  {settingsRef.current?.sttEngine ?? "—"} · {modeRef.current} ·{" "}
+                  {settingsRef.current?.meetConfigs[modeRef.current]?.behavior ?? "—"} ·{" "}
+                  {muted ? "MUDO" : "ouvindo"}
+                </span>
               </div>
-            ))
+              {debugLines.length === 0 ? (
+                <div className="text-white/40">sem eventos ainda…</div>
+              ) : (
+                debugLines.map((l, i) => (
+                  <div key={i} className="whitespace-pre-wrap break-words">
+                    {l}
+                  </div>
+                ))
+              )}
+            </div>
           )}
         </div>
-      )}
+      </div>
 
-      {/* ===== Barra de controles ===== */}
-      {isLive && (
-        <div
-          className={`absolute inset-x-0 bottom-6 z-30 flex items-center justify-center gap-4 transition-opacity duration-300 ${
-            controlsVisible ? "opacity-100" : "pointer-events-none opacity-0"
-          }`}
+      {/* ===== Barra de controles — sempre visível, nunca some ===== */}
+      <div className="flex h-20 shrink-0 items-center justify-center gap-3">
+        <MeetButton
+          onClick={toggleMute}
+          danger={muted}
+          label={muted ? "Ativar microfone" : "Desativar microfone"}
         >
-          <button
-            onClick={toggleMute}
-            title={muted ? "Ativar microfone" : "Desativar microfone"}
-            aria-label={muted ? "Ativar microfone" : "Desativar microfone"}
-            className={`flex h-14 w-14 items-center justify-center rounded-full border transition-colors ${
-              muted
-                ? "border-transparent bg-red-500 hover:bg-red-600"
-                : "border-white/20 bg-white/15 hover:bg-white/25"
-            }`}
-          >
-            {muted ? <IconMicOff /> : <IconMic />}
-          </button>
+          {muted ? <IconMicOff /> : <IconMic />}
+        </MeetButton>
 
-          <button
-            onClick={() => void toggleCamera()}
-            title={camOn ? "Desligar câmera" : "Ligar câmera"}
-            aria-label={camOn ? "Desligar câmera" : "Ligar câmera"}
-            className={`flex h-14 w-14 items-center justify-center rounded-full border transition-colors ${
-              camOn
-                ? "border-white/20 bg-white/15 hover:bg-white/25"
-                : "border-transparent bg-red-500 hover:bg-red-600"
-            }`}
-          >
-            {camOn ? <IconCam /> : <IconCamOff />}
-          </button>
+        <MeetButton
+          onClick={() => void toggleCamera()}
+          danger={!camOn}
+          label={camOn ? "Desligar câmera" : "Ligar câmera"}
+        >
+          {camOn ? <IconCam /> : <IconCamOff />}
+        </MeetButton>
 
-          <button
-            onClick={() => void leaveCall()}
-            title="Sair da chamada"
-            aria-label="Sair da chamada"
-            className="flex h-14 items-center justify-center rounded-full bg-red-500 px-7 transition-colors hover:bg-red-600"
-          >
-            <IconEnd />
-          </button>
-        </div>
-      )}
+        {/* Mesmo botão vermelho nos dois estados: fora da chamada o telefone aponta
+            pra cima (entrar), na chamada aponta pra baixo (desligar). */}
+        <button
+          onClick={() => (isLive ? void leaveCall() : void joinCall())}
+          disabled={isConnecting}
+          title={isLive ? "Sair da chamada" : "Entrar na chamada"}
+          aria-label={isLive ? "Sair da chamada" : "Entrar na chamada"}
+          className="flex h-12 items-center justify-center rounded-full bg-[#ea4335] px-6 transition-colors hover:bg-[#d93025] disabled:cursor-default"
+        >
+          <IconPhone down={isLive} />
+        </button>
+      </div>
     </div>
   );
 }
 
-/* ===== ícones (traço fino, no estilo do Meet) ===== */
+/** Botão redondo da barra do Meet: cinza quando ativo, vermelho quando cortado. */
+function MeetButton({
+  onClick,
+  danger,
+  label,
+  children,
+}: {
+  onClick: () => void;
+  danger: boolean;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      className={`flex h-12 w-12 items-center justify-center rounded-full transition-colors ${
+        danger ? "bg-[#ea4335] hover:bg-[#d93025]" : "bg-[#3c4043] hover:bg-[#4a4e51]"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
 
-function IconMic() {
+/* ===== ícones (preenchidos, no estilo do Meet) ===== */
+
+function IconInfo() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] fill-white/60">
+      <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" />
+    </svg>
+  );
+}
+
+/** Handset do Meet: pra cima entra na chamada, girado 135° desliga. */
+function IconPhone({ down }: { down: boolean }) {
   return (
     <svg
       viewBox="0 0 24 24"
-      className="h-6 w-6 fill-none stroke-white stroke-[1.8]"
-      strokeLinecap="round"
+      className="h-6 w-6 fill-white transition-transform"
+      style={{ transform: down ? "rotate(135deg)" : "none" }}
     >
-      <rect x="9" y="3" width="6" height="11" rx="3" />
-      <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+      <path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.4.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.4 0 .7-.2 1l-2.3 2.2z" />
+    </svg>
+  );
+}
+
+function IconMic() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-6 w-6 fill-white">
+      <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z" />
+      <path d="M19 11a7 7 0 0 1-6 6.92V21h-2v-3.08A7 7 0 0 1 5 11h2a5 5 0 0 0 10 0h2z" />
     </svg>
   );
 }
 
 function IconMicOff() {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      className="h-6 w-6 fill-none stroke-white stroke-[1.8]"
-      strokeLinecap="round"
-    >
-      <path d="M9 9V6a3 3 0 0 1 6 0v5M5 11a7 7 0 0 0 11 5.5M12 18v3" />
-      <path d="M4 4l16 16" />
+    <svg viewBox="0 0 24 24" className="h-6 w-6 fill-white">
+      <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v.17L15 11h-.17L12 14z" opacity=".999" />
+      <path d="M19 11a6.97 6.97 0 0 1-1.06 3.7l-1.46-1.46A5 5 0 0 0 17 11h2zM4.27 3L3 4.27l6 6V11a3 3 0 0 0 4.31 2.7l1.52 1.53A5 5 0 0 1 7 11H5a7 7 0 0 0 6 6.92V21h2v-3.08a6.96 6.96 0 0 0 2.61-.99L19.73 21 21 19.73 4.27 3z" />
     </svg>
   );
 }
@@ -1441,14 +1468,6 @@ function IconCamOff() {
     >
       <path d="M3 8a2 2 0 0 1 2-2h7M15 10l6-3v10M15 13v3a2 2 0 0 1-2 2H6" />
       <path d="M3 3l18 18" />
-    </svg>
-  );
-}
-
-function IconEnd() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-6 w-6 fill-white">
-      <path d="M3 11a13 13 0 0 1 18 0l-2.2 2.2a2 2 0 0 1-2.6.2l-1.8-1.3a1.5 1.5 0 0 1-.6-1.2V9.4a11 11 0 0 0-4 0v1.7a1.5 1.5 0 0 1-.6 1.2L7.8 13.4a2 2 0 0 1-2.6-.2L3 11z" />
     </svg>
   );
 }
