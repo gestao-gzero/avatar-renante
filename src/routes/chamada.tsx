@@ -999,14 +999,11 @@ export default function Chamada() {
       const promote = () => {
         newSession.off(SessionEvent.SESSION_STREAM_READY, promote);
         const cutElapsedMs = pending ? Date.now() - pending.startedAt : 0;
-        try {
-          const el = slotEl(nextSlot);
-          if (el) newSession.attach(el);
-        } catch (e) {
-          logError("hot-swap: attach falhou", e);
-        }
+        // O attach e o play do slot novo já foram feitos pelo handler de
+        // SESSION_STREAM_READY registrado em registerSdkEvents — que é o MESMO evento
+        // que dispara este promote. Refazer aqui trocava o srcObject no meio do play()
+        // anterior e abortava ele ("The fetching process ... was aborted").
         sessionRef.current = newSession;
-        void playSlot(nextSlot);
 
         // O fade: o slot novo já está tocando por baixo; só agora ele vem pra frente.
         activeSlotRef.current = nextSlot;
@@ -1050,7 +1047,7 @@ export default function Chamada() {
       swapInProgressRef.current = false;
       scheduleHotSwap();
     }
-  }, [fetchToken, registerSdkEvents, slotEl, playSlot, scheduleHotSwap, log, logError]);
+  }, [fetchToken, registerSdkEvents, scheduleHotSwap, log, logError]);
 
   useEffect(() => {
     prewarmSwapRef.current = prewarmAndSwap;
@@ -1101,7 +1098,10 @@ export default function Chamada() {
       swapInProgressRef.current = false;
       scheduleHotSwap();
 
-      void startListening();
+      // A sessão começa com o microfone FECHADO — quem opera abre no botão quando
+      // quiser. Entrar já escutando faz o avatar reagir à conversa de bastidores
+      // antes de a apresentação começar.
+      log("sessão iniciada com o microfone fechado — abra no botão para ele ouvir");
     } catch (error) {
       const msg = logError("não foi possível iniciar a chamada", error);
       setFatalError(msg);
@@ -1111,7 +1111,7 @@ export default function Chamada() {
       sessionRef.current = null;
       setPhase("prejoin");
     }
-  }, [fetchToken, registerSdkEvents, scheduleHotSwap, startListening, logError]);
+  }, [fetchToken, registerSdkEvents, scheduleHotSwap, log, logError]);
 
   const leaveCall = useCallback(async () => {
     endedByUserRef.current = true;
@@ -1257,13 +1257,19 @@ export default function Chamada() {
       </div>
 
       {/* ===== Palco: o quadro do participante ===== */}
-      <div className="min-h-0 flex-1 px-4">
-        {/* Contorno azul em quem está falando — o Meet faz isso, e é o sinal que
-            diferencia "chamada" de "vídeo em tela cheia". */}
+      <div className="flex min-h-0 flex-1 items-center justify-center px-4 py-2">
+        {/* Quadro 16:9 centralizado. Só a LARGURA é limitada (por quanto de altura
+            sobra na tela); a altura vem do próprio aspect-ratio. Fazer o contrário —
+            limitar a altura — quebraria a proporção, porque com largura e altura
+            ambas definidas o navegador ignora o aspect-ratio.
+            9rem = barra superior (3rem) + controles (5rem) + padding vertical (1rem).
+
+            O contorno azul marca quem está falando, como o Meet faz. */}
         <div
-          className={`relative h-full w-full overflow-hidden rounded-2xl bg-black outline-none ring-inset transition-shadow duration-200 ${
+          className={`relative aspect-video w-full overflow-hidden rounded-2xl bg-black ring-inset transition-shadow duration-200 ${
             isLive && turn === "speaking" ? "ring-[3px] ring-[#8ab4f8]" : "ring-0"
           }`}
+          style={{ maxWidth: "calc((100vh - 9rem) * 16 / 9)" }}
         >
           {/* A foto do avatar fica SEMPRE no fundo, sem escurecer e sem nada por cima.
               Antes de conectar é ela que se vê — como se ele já estivesse na sala. O
