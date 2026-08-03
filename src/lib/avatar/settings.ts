@@ -11,7 +11,7 @@
 // que é preciso configurar no console. Isso é proposital — é melhor recusar do que
 // entrar no ar com valores inventados aqui.
 
-export type Mode = "conversa" | "reuniao" | "entrevistador";
+export type Mode = "conversa" | "reuniao" | "entrevistador" | "renan";
 
 /** Chaves gravadas pelo console. Precisam bater exatamente com as do `index.tsx`. */
 export const SETTINGS_KEY = "liveavatar.settings.v1";
@@ -52,6 +52,7 @@ export type CallSettings = {
   webhookConversa: string;
   webhookReuniao: string;
   webhookEntrevistador: string;
+  webhookRenan: string;
   webhookFiller: string;
   hotSwapAfterSec: number;
   sttEngine: "webspeech" | "deepgram";
@@ -106,6 +107,10 @@ export function readConsoleSettings(): CallSettings | null {
   const conversa = readModeConfig(rawConfigs.conversa);
   const reuniao = readModeConfig(rawConfigs.reuniao);
   const entrevistador = readModeConfig(rawConfigs.entrevistador);
+  // O modo "renan" é mais novo que os outros três: um console que ainda não gravou
+  // depois da atualização não tem esta chave. Nesse caso a config NÃO é inválida —
+  // só não dá pra usar este modo, e é o que o `readConsoleMode` abaixo checa.
+  const renan = readModeConfig(rawConfigs.renan);
   if (!conversa || !reuniao || !entrevistador) return null;
 
   // Intervalo do hot-swap: sem um valor positivo não dá pra agendar a troca, e chutar
@@ -124,12 +129,15 @@ export function readConsoleSettings(): CallSettings | null {
     webhookConversa: str(parsed.webhookConversa),
     webhookReuniao: str(parsed.webhookReuniao),
     webhookEntrevistador: str(parsed.webhookEntrevistador),
+    webhookRenan: str(parsed.webhookRenan),
     webhookFiller: str(parsed.webhookFiller),
     hotSwapAfterSec,
     sttEngine: engine,
     deepgramApiKey: str(parsed.deepgramApiKey),
     posterUrl: str(parsed.posterUrl),
-    meetConfigs: { conversa, reuniao, entrevistador },
+    // Sem config salva do modo "renan" (console anterior à atualização), ele herda a
+    // do modo Conversa — que é exatamente o comportamento dele: responde tudo.
+    meetConfigs: { conversa, reuniao, entrevistador, renan: renan ?? conversa },
   };
 }
 
@@ -137,7 +145,9 @@ export function readConsoleSettings(): CallSettings | null {
 export function readConsoleMode(): Mode {
   if (typeof window === "undefined") return "conversa";
   const v = window.localStorage.getItem(MODE_KEY);
-  return v === "conversa" || v === "reuniao" || v === "entrevistador" ? v : "conversa";
+  return v === "conversa" || v === "reuniao" || v === "entrevistador" || v === "renan"
+    ? v
+    : "conversa";
 }
 
 /** Webhook n8n do modo — cada modo tem o seu; o filler é global. */
@@ -146,5 +156,7 @@ export function webhookForMode(s: CallSettings, mode: Mode): string {
     ? s.webhookConversa
     : mode === "entrevistador"
       ? s.webhookEntrevistador
-      : s.webhookReuniao;
+      : mode === "renan"
+        ? s.webhookRenan
+        : s.webhookReuniao;
 }

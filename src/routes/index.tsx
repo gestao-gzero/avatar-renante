@@ -86,17 +86,19 @@ const HOT_SWAP_MAX_DEFER_MS = 20_000;
 // filler + agente). Bloqueia duplicatas/eco do reconhecimento de voz.
 const SEND_MIN_GAP_MS = 1000;
 
-type Mode = "conversa" | "reuniao" | "entrevistador";
+type Mode = "conversa" | "reuniao" | "entrevistador" | "renan";
 const MODES: { id: Mode; label: string }[] = [
   { id: "conversa", label: "Conversa" },
   { id: "reuniao", label: "Reunião" },
   { id: "entrevistador", label: "Entrevistador" },
+  { id: "renan", label: "Renan" },
 ];
 
 type Settings = {
   webhookConversa: string;
   webhookReuniao: string;
   webhookEntrevistador: string;
+  webhookRenan: string;
   webhookFiller: string;
   apiKey: string;
   avatarId: string;
@@ -134,6 +136,7 @@ const DEFAULT_SETTINGS: Settings = {
   webhookConversa: "https://n8n.srv1435894.hstgr.cloud/webhook/c32e3b52-1d99-483f-8da7-c2b2f981687b",
   webhookReuniao: "https://n8n.srv1435894.hstgr.cloud/webhook/renante-reuniao",
   webhookEntrevistador: "https://n8n.srv1435894.hstgr.cloud/webhook/renante-entrevistador",
+  webhookRenan: "https://n8n.srv1435894.hstgr.cloud/webhook/renan",
   webhookFiller: "https://n8n.srv1435894.hstgr.cloud/webhook/filler",
   apiKey: "", // vem do servidor (HEYGEN_API_KEY no .env / Vercel); vazio aqui = usa a env
   avatarId: "f79bd86d-ec79-4ff6-85e9-2eee714eaa0e",
@@ -168,6 +171,15 @@ const DEFAULT_SETTINGS: Settings = {
       behavior: "always",
       bargeIn: true,
     },
+    // Modo Renan: agente próprio no n8n (webhook /renan), não o do Nâner. Responde
+    // tudo, como o modo Conversa — a diferença está em qual agente atende.
+    renan: {
+      greeting: "Olá! Tudo bem? Podem falar comigo à vontade.",
+      transitionGreeting: "Certo, seguindo por aqui.",
+      reconnectGreeting: "Eita, caiu a conexão — pode continuar de onde estava.",
+      behavior: "always",
+      bargeIn: true,
+    },
   },
   meetDebug: false,
   // 0.5s causava envios duplicados: uma pausa natural no meio da frase (comum
@@ -198,19 +210,25 @@ function loadSettings(): Settings {
     if (!base || LEGACY_AVATAR_HOSTS.some((h) => base.includes(h))) {
       merged.avatarBaseUrl = AVATAR_BASE_URL_DEFAULT;
     }
-    // Garante que meetConfigs tenha os 3 modos (compat com configs antigas).
+    // Garante que meetConfigs tenha todos os modos (compat com configs antigas —
+    // inclusive as salvas antes de o modo "renan" existir).
     const pc = parsed?.meetConfigs ?? {};
     merged.meetConfigs = {
       conversa: { ...DEFAULT_SETTINGS.meetConfigs.conversa, ...(pc.conversa ?? {}) },
       reuniao: { ...DEFAULT_SETTINGS.meetConfigs.reuniao, ...(pc.reuniao ?? {}) },
       entrevistador: { ...DEFAULT_SETTINGS.meetConfigs.entrevistador, ...(pc.entrevistador ?? {}) },
+      renan: { ...DEFAULT_SETTINGS.meetConfigs.renan, ...(pc.renan ?? {}) },
     };
     // MIGRAÇÃO: falas salvas que ainda citam o nome antigo do avatar ("Renan"/
     // "Renante") — de antes do rename pra "Nâner" — ficariam presas nesse texto
     // pra sempre, já que config salva sempre vence o default novo do código.
     // Detecta e substitui pelo default atual campo a campo.
+    // O modo "renan" fica FORA desta migração: ele é do agente Renan, então citar
+    // "Renan" na fala dele é o esperado — não é resquício do nome antigo. Sem esta
+    // exceção, a saudação configurada nele seria apagada a cada carregamento.
     const staleName = /renante|renan/i;
     (Object.keys(merged.meetConfigs) as Mode[]).forEach((m) => {
+      if (m === "renan") return;
       (["greeting", "transitionGreeting", "reconnectGreeting"] as const).forEach((field) => {
         if (staleName.test(merged.meetConfigs[m][field])) {
           merged.meetConfigs[m][field] = DEFAULT_SETTINGS.meetConfigs[m][field];
@@ -226,7 +244,9 @@ function loadSettings(): Settings {
 function loadMode(): Mode {
   if (typeof window === "undefined") return "conversa";
   const v = window.localStorage.getItem(MODE_KEY) as Mode | null;
-  return v === "conversa" || v === "reuniao" || v === "entrevistador" ? v : "conversa";
+  return v === "conversa" || v === "reuniao" || v === "entrevistador" || v === "renan"
+    ? v
+    : "conversa";
 }
 
 // Monta a URL pública /meet com a config do MODO escolhido pra subir no Meet.
@@ -239,7 +259,9 @@ function buildMeetUrl(s: Settings, debug: boolean, authToken = "", meetSessionId
       ? s.webhookConversa
       : m === "entrevistador"
         ? s.webhookEntrevistador
-        : s.webhookReuniao;
+        : m === "renan"
+          ? s.webhookRenan
+          : s.webhookReuniao;
   const base = s.avatarBaseUrl.replace(/\/+$/, "");
   const qs = new URLSearchParams({
     apiKey: s.apiKey,
@@ -1236,6 +1258,7 @@ function Index() {
         ["Conversa", s.webhookConversa],
         ["Reunião", s.webhookReuniao],
         ["Entrevistador", s.webhookEntrevistador],
+        ["Renan", s.webhookRenan],
         ["Filler", s.webhookFiller],
       ];
       for (const [nm, url] of hooks) {
@@ -2295,13 +2318,16 @@ function Index() {
           ? s.webhookConversa
           : currentMode === "reuniao"
             ? s.webhookReuniao
-            : s.webhookEntrevistador;
+            : currentMode === "renan"
+              ? s.webhookRenan
+              : s.webhookEntrevistador;
 
       // Reunião: corpo inclui `responder`. Texto digitado default = true.
       const responder = currentMode === "reuniao" ? opts?.responder ?? true : undefined;
       const willSpeak =
         currentMode === "conversa" ||
         currentMode === "entrevistador" ||
+        currentMode === "renan" ||
         (currentMode === "reuniao" && responder === true);
       const useFiller = willSpeak && currentMode !== "entrevistador";
 
@@ -2911,6 +2937,7 @@ function Index() {
       `webhookConversa: ${s.webhookConversa ? "✅ " + s.webhookConversa : "❌ vazio"}`,
       `webhookReuniao: ${s.webhookReuniao ? "✅ " + s.webhookReuniao : "❌ vazio"}`,
       `webhookEntrevistador: ${s.webhookEntrevistador ? "✅ " + s.webhookEntrevistador : "❌ vazio"}`,
+      `webhookRenan: ${s.webhookRenan ? "✅ " + s.webhookRenan : "❌ vazio"}`,
       `webhookFiller: ${s.webhookFiller ? "✅ " + s.webhookFiller : "❌ vazio"}`,
       `apiKey: ${s.apiKey ? "✅ " + mask(s.apiKey) : "❌ vazio"}`,
       `avatarId: ${s.avatarId ? "✅ " + s.avatarId : "❌ vazio"}`,
@@ -2922,6 +2949,7 @@ function Index() {
       s.webhookConversa,
       s.webhookReuniao,
       s.webhookEntrevistador,
+      s.webhookRenan,
       s.webhookFiller,
       s.apiKey,
       s.avatarId,
@@ -3007,6 +3035,16 @@ function Index() {
         id: "conversa",
         title: "Conversa",
         url: s.webhookConversa,
+        body: { question: "diagnostico, responda apenas OK", sessionId: "diagnostico" },
+        validate: (p) => {
+          const o = (p?.output ?? p?.text ?? p?.message ?? "").toString().trim();
+          return { ok: o.length > 0, reason: o ? `output="${o}"` : "output vazio (esperado texto)" };
+        },
+      },
+      {
+        id: "renan",
+        title: "Renan",
+        url: s.webhookRenan,
         body: { question: "diagnostico, responda apenas OK", sessionId: "diagnostico" },
         validate: (p) => {
           const o = (p?.output ?? p?.text ?? p?.message ?? "").toString().trim();
@@ -4098,6 +4136,7 @@ function Index() {
                   "webhookConversa",
                   "webhookReuniao",
                   "webhookEntrevistador",
+                  "webhookRenan",
                   "webhookFiller",
                 ] as (keyof Settings)[];
               const webhooksFilledCount = webhookFields.filter((k) => req(settings[k] as string)).length;
@@ -4116,7 +4155,7 @@ function Index() {
                       {
                         id: "webhooks",
                         nm: "Webhooks n8n",
-                        sub: "4 endpoints",
+                        sub: "5 endpoints",
                         ok: webhooksOk,
                         vl: `${webhooksFilledCount}/${webhookFields.length} configurados`,
                       },
@@ -4524,8 +4563,8 @@ function Index() {
             <span className="tt">Webhooks <small>· n8n</small></span>
             <div className="r">
               {(() => {
-                const ok = [settings.webhookConversa, settings.webhookReuniao, settings.webhookEntrevistador, settings.webhookFiller].filter(Boolean).length;
-                return <span className={`badge${ok < 4 ? " err" : ""}`}>{ok}/4</span>;
+                const ok = [settings.webhookConversa, settings.webhookReuniao, settings.webhookEntrevistador, settings.webhookRenan, settings.webhookFiller].filter(Boolean).length;
+                return <span className={`badge${ok < 5 ? " err" : ""}`}>{ok}/5</span>;
               })()}
             </div>
           </div>
@@ -4536,6 +4575,7 @@ function Index() {
                 { key: "webhookConversa" as keyof Settings, label: "Webhook Conversa" },
                 { key: "webhookReuniao" as keyof Settings, label: "Webhook Reunião" },
                 { key: "webhookEntrevistador" as keyof Settings, label: "Webhook Entrevistador" },
+                { key: "webhookRenan" as keyof Settings, label: "Webhook Renan" },
                 { key: "webhookFiller" as keyof Settings, label: "Webhook Filler" },
               ]).map(({ key, label }) => (
                 <div key={String(key)} className={`field wide req${!settings[key] ? " err" : ""}`}>
@@ -4895,7 +4935,7 @@ function Index() {
               const avatarOk = (["avatarId", "voiceId", "contextId", "language"] as (keyof Settings)[]).every(
                 (k) => req(settingsDraft[k] as string),
               );
-              const webhooksOk = (["webhookConversa", "webhookReuniao", "webhookEntrevistador", "webhookFiller"] as (keyof Settings)[]).every(
+              const webhooksOk = (["webhookConversa", "webhookReuniao", "webhookEntrevistador", "webhookRenan", "webhookFiller"] as (keyof Settings)[]).every(
                 (k) => req(settingsDraft[k] as string),
               );
               const tabs = [

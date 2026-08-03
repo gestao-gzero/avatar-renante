@@ -396,6 +396,7 @@ export default function Chamada() {
       const willSpeak =
         currentMode === "conversa" ||
         currentMode === "entrevistador" ||
+        currentMode === "renan" ||
         (currentMode === "reuniao" && responder === true);
       const useFiller = willSpeak && currentMode !== "entrevistador";
 
