@@ -320,11 +320,17 @@ export default function Chamada() {
       const clean = txt.trim();
       if (!clean) return;
       if (isAvatarSpeakingRef.current) await waitForAvatarEnd();
+      // O timeout acompanha o tamanho do texto. Uma fala de entrada longa (o roteiro
+      // do modo Renan passa de dois minutos) estouraria o limite fixo de 60s e
+      // rejeitaria no meio, mesmo com o avatar ainda falando normalmente.
+      const words = clean.split(/\s+/).filter(Boolean).length;
+      const estimateMs = (words / 2.2) * 1000 + 15_000; // ~2,2 palavras/s + folga
+      const timeoutMs = Math.max(SPEAK_TIMEOUT_MS, Math.round(estimateMs));
       const ended = new Promise<void>((resolve, reject) => {
         const timer = window.setTimeout(() => {
           session.off(AgentEventsEnum.AVATAR_SPEAK_ENDED, onEnd);
-          reject(new Error(`Timeout aguardando avatar.speak_ended após ${SPEAK_TIMEOUT_MS}ms`));
-        }, SPEAK_TIMEOUT_MS);
+          reject(new Error(`Timeout aguardando avatar.speak_ended após ${timeoutMs}ms`));
+        }, timeoutMs);
         const onEnd = () => {
           window.clearTimeout(timer);
           session.off(AgentEventsEnum.AVATAR_SPEAK_ENDED, onEnd);
@@ -339,6 +345,23 @@ export default function Chamada() {
     },
     [waitForAvatarEnd],
   );
+
+  // Dispara a "fala ao entrar" configurada no console para o modo atual. É o que o
+  // botão de emoji faz: por fora parece o botão de reações do Meet, e serve pra
+  // quem opera disparar a abertura na hora certa, sem que a plateia perceba.
+  const speakGreeting = useCallback(async () => {
+    const greeting = (settingsRef.current?.meetConfigs[modeRef.current]?.greeting ?? "").trim();
+    if (!greeting) {
+      log(`modo "${modeRef.current}" está sem fala ao entrar configurada no console`, "err");
+      return;
+    }
+    log(`disparando a fala ao entrar (${greeting.length} caracteres)`, "ok");
+    try {
+      await speakAndWait(greeting);
+    } catch (e) {
+      logError("fala ao entrar falhou", e);
+    }
+  }, [speakAndWait, log, logError]);
 
   // ===== IA classificadora (Reunião) =====
   // Só roda quando o regex JÁ achou o nome, pra não virar uma chamada de LLM por frase
@@ -1081,20 +1104,15 @@ export default function Chamada() {
       await session.start();
       setPhase("live");
 
-      // Saudação: interrompe a fala automática do HeyGen e diz a frase configurada.
-      const greeting = (s.meetConfigs[modeRef.current]?.greeting ?? "").trim();
-      if (greeting) {
-        for (let i = 0; i < 4; i++) {
-          try {
-            (session as any)?.interrupt?.();
-          } catch {}
-          await new Promise((r) => window.setTimeout(r, 250));
-        }
+      // A sessão entra em SILÊNCIO. O HeyGen começa a falar sozinho ao conectar, então
+      // os interrupts continuam sendo necessários — o que saiu foi a nossa fala de
+      // entrada, que agora só sai quando alguém clica no botão de emoji (ou quando
+      // alguém fala com ele e o n8n responde).
+      for (let i = 0; i < 4; i++) {
         try {
-          session.repeat(greeting);
-        } catch (e) {
-          logError("saudação inicial falhou", e);
-        }
+          (session as any)?.interrupt?.();
+        } catch {}
+        await new Promise((r) => window.setTimeout(r, 250));
       }
       swapInProgressRef.current = false;
       scheduleHotSwap();
@@ -1102,7 +1120,7 @@ export default function Chamada() {
       // A sessão começa com o microfone FECHADO — quem opera abre no botão quando
       // quiser. Entrar já escutando faz o avatar reagir à conversa de bastidores
       // antes de a apresentação começar.
-      log("sessão iniciada com o microfone fechado — abra no botão para ele ouvir");
+      log("sessão conectada em silêncio — microfone fechado, fala de entrada no botão 🙂");
     } catch (error) {
       const msg = logError("não foi possível iniciar a chamada", error);
       setFatalError(msg);
@@ -1370,6 +1388,18 @@ export default function Chamada() {
           {camOn ? <IconCam /> : <IconCamOff />}
         </MeetButton>
 
+        {/* Botão de emoji: por fora é o de reações do Meet, por dentro dispara a fala
+            de entrada. Fica desligado enquanto não há sessão. */}
+        <button
+          onClick={() => void speakGreeting()}
+          disabled={!isLive}
+          title="Reações"
+          aria-label="Reações"
+          className="flex h-12 w-12 items-center justify-center rounded-full bg-[#3c4043] transition-colors hover:bg-[#4a4e51] disabled:opacity-40"
+        >
+          <IconEmoji />
+        </button>
+
         {/* Mesmo botão vermelho nos dois estados: fora da chamada o telefone aponta
             pra cima (entrar), na chamada aponta pra baixo (desligar). */}
         <button
@@ -1418,6 +1448,17 @@ function IconInfo() {
   return (
     <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] fill-white/60">
       <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" />
+    </svg>
+  );
+}
+
+function IconEmoji() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-6 w-6 fill-white">
+      <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16z" />
+      <circle cx="8.5" cy="9.5" r="1.5" />
+      <circle cx="15.5" cy="9.5" r="1.5" />
+      <path d="M12 17.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z" />
     </svg>
   );
 }

@@ -132,6 +132,42 @@ type MeetModeConfig = {
   bargeIn: boolean; // permitir interromper a fala dele falando por cima
 };
 
+// Fala ao entrar do modo Renan. Roteiro de locução — mantido EXATAMENTE como
+// recebido, incluindo maiúsculas enfáticas, reticências e pausas.
+const RENAN_GREETING = `EAí, pessoal... que MASSA tá aqui com vocês!
+
+Meu nome é Renan… eu sou sócio da Gravidade Zero e dos meninos que tão aí.
+
+E olha... éee eu tô nos Estados Unidos agora... mas eu queria muito tá aí com vocês, véi. Muito mesmo.
+
+Mas eu fico de boa... porque tem Ricardo e Julinho aí... representando a gente. E eu sei que vai ser massa demais.
+
+Rapaz... vocês tão vivendo um momento histórico. É a primeira vez na HISTÓRIA da Natura... que essa Rede se junta desse jeito.
+
+E eu venho do mundo de produto e tecnologia, né... já trabalhei com empresa de tudo quanto é setor e… eu nunca vi nada parecido com a Rede da Natura. É uma força comercial que num é só comercial, não. Ela é humana. São milhares de pessoas, .. que constroem relação... que cuidam umas das outras... que transforma venda em vínculo.
+
+E isso é demais! 
+
+É…
+
+é por isso que a gente tá junto!
+
+A tese que move o trabalho da gente É como a tecnologia aumenta as pessoas, ajuda elas a chegarem a melhor versão... tirando peso das costas... e a gente tem como crescer muito ainda como rede, focando no que a gente faz de melhor:
+
+Ouvir… Acompanhar... Estar junto.
+
+HMMM…
+
+Nos últimos meses a gente mergulhou fundo no mundo de vocês. Escutamo muita história da ponta... entendemo as dores reais do dia a dia. E... olha... o que a gente tá construindo junto... nasceu de dentro da Rede.
+Mas... calma... eu ainda não vou entregar tudo agora, não. Relaxa Edu.
+`;
+
+// Placeholder que o modo Renan teve por um commit, antes deste roteiro existir.
+// Config salva vence o default do código, então quem abriu o console nesse intervalo
+// ficaria preso nele para sempre. A migração troca só esta frase exata — ninguém
+// digitaria isso à mão, então não há risco de sobrescrever texto de verdade.
+const RENAN_GREETING_PLACEHOLDER = "Olá! Tudo bem? Podem falar comigo à vontade.";
+
 const DEFAULT_SETTINGS: Settings = {
   webhookConversa: "https://n8n.srv1435894.hstgr.cloud/webhook/c32e3b52-1d99-483f-8da7-c2b2f981687b",
   webhookReuniao: "https://n8n.srv1435894.hstgr.cloud/webhook/renante-reuniao",
@@ -173,8 +209,11 @@ const DEFAULT_SETTINGS: Settings = {
     },
     // Modo Renan: agente próprio no n8n (webhook /renan), não o do Nâner. Responde
     // tudo, como o modo Conversa — a diferença está em qual agente atende.
+    // A fala ao entrar é um roteiro escrito para ser lido em voz alta: as
+    // reticências, o alongamento das vogais e a pontuação irregular estão ali de
+    // propósito, controlando o ritmo da locução. NÃO normalizar nem "corrigir".
     renan: {
-      greeting: "Olá! Tudo bem? Podem falar comigo à vontade.",
+      greeting: RENAN_GREETING,
       transitionGreeting: "Certo, seguindo por aqui.",
       reconnectGreeting: "Eita, caiu a conexão — pode continuar de onde estava.",
       behavior: "always",
@@ -219,6 +258,12 @@ function loadSettings(): Settings {
       entrevistador: { ...DEFAULT_SETTINGS.meetConfigs.entrevistador, ...(pc.entrevistador ?? {}) },
       renan: { ...DEFAULT_SETTINGS.meetConfigs.renan, ...(pc.renan ?? {}) },
     };
+    // MIGRAÇÃO: substitui o placeholder que o modo Renan teve por um commit pelo
+    // roteiro definitivo. Sem isto, quem abriu o console naquele intervalo ficaria
+    // preso na frase antiga, porque config salva sempre vence o default do código.
+    if (merged.meetConfigs.renan.greeting.trim() === RENAN_GREETING_PLACEHOLDER) {
+      merged.meetConfigs.renan.greeting = RENAN_GREETING;
+    }
     // MIGRAÇÃO: falas salvas que ainda citam o nome antigo do avatar ("Renan"/
     // "Renante") — de antes do rename pra "Nâner" — ficariam presas nesse texto
     // pra sempre, já que config salva sempre vence o default novo do código.
@@ -4330,6 +4375,7 @@ function Index() {
                 { id: "conversa" as Mode, name: "Conversa", tag: "sempre ativo", tagCls: "" },
                 { id: "reuniao" as Mode, name: "Reunião", tag: "wake word", tagCls: "blue" },
                 { id: "entrevistador" as Mode, name: "Entrevistador", tag: "sempre ativo", tagCls: "" },
+                { id: "renan" as Mode, name: "Renan", tag: "sempre ativo", tagCls: "" },
               ]).map((m) => {
                 const cfg = settings.meetConfigs[m.id] ?? { greeting: "", transitionGreeting: "", reconnectGreeting: "", behavior: "always" as const, bargeIn: false };
                 return (
