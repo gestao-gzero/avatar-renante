@@ -10,11 +10,17 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as MeetRouteImport } from './routes/meet'
+import { Route as ChamadaRouteImport } from './routes/chamada'
 import { Route as IndexRouteImport } from './routes/index'
 
 const MeetRoute = MeetRouteImport.update({
   id: '/meet',
   path: '/meet',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ChamadaRoute = ChamadaRouteImport.update({
+  id: '/chamada',
+  path: '/chamada',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -25,27 +31,31 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/chamada': typeof ChamadaRoute
   '/meet': typeof MeetRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/chamada': typeof ChamadaRoute
   '/meet': typeof MeetRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/chamada': typeof ChamadaRoute
   '/meet': typeof MeetRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/meet'
+  fullPaths: '/' | '/chamada' | '/meet'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/meet'
-  id: '__root__' | '/' | '/meet'
+  to: '/' | '/chamada' | '/meet'
+  id: '__root__' | '/' | '/chamada' | '/meet'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ChamadaRoute: typeof ChamadaRoute
   MeetRoute: typeof MeetRoute
 }
 
@@ -56,6 +66,13 @@ declare module '@tanstack/react-router' {
       path: '/meet'
       fullPath: '/meet'
       preLoaderRoute: typeof MeetRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/chamada': {
+      id: '/chamada'
+      path: '/chamada'
+      fullPath: '/chamada'
+      preLoaderRoute: typeof ChamadaRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -70,6 +87,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ChamadaRoute: ChamadaRoute,
   MeetRoute: MeetRoute,
 }
 export const routeTree = rootRouteImport

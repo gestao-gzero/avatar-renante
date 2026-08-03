@@ -3686,6 +3686,15 @@ function Index() {
           <button className="btn sm" onClick={() => setDiagOpen(true)}>
             🩺 Diagnóstico
           </button>
+          <a
+            className="btn sm"
+            href="/chamada"
+            target="_blank"
+            rel="noreferrer"
+            title="Abre a tela de chamada (avatar em tela cheia, sem console) numa nova aba"
+          >
+            🎥 Chamada
+          </a>
         </div>
       </div>
 
