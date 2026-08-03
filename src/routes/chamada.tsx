@@ -112,13 +112,27 @@ export default function Chamada() {
   const fillerHistoryRef = useRef<string[]>([]);
   const lastSendRef = useRef<{ text: string; timestamp: number }>({ text: "", timestamp: 0 });
 
-  // Sem painel de log na tela: o diagnóstico vai só pro console do navegador, que
-  // continua disponível pra quem estiver operando (F12) sem aparecer no telão.
+  // Diagnóstico: sempre vai pro console do navegador (F12), nunca pro telão. Com
+  // `?debug=1` na URL, também aparece num overlay pequeno — serve pra descobrir onde
+  // a escuta parou sem precisar de um cabo de dados e um notebook do lado.
+  const debugRef = useRef(false);
+  const [debugOn, setDebugOn] = useState(false);
+  const [debugLines, setDebugLines] = useState<string[]>([]);
+  useEffect(() => {
+    const on = new URLSearchParams(window.location.search).has("debug");
+    debugRef.current = on;
+    setDebugOn(on);
+  }, []);
+
   const log = useCallback((msg: string, kind: "info" | "ok" | "err" = "info") => {
     const line = `${new Date().toISOString()} [chamada] ${msg}`;
     if (kind === "err") console.error(line);
     else if (kind === "ok") console.info(line);
     else console.log(line);
+    if (debugRef.current) {
+      const hhmmss = new Date().toLocaleTimeString("pt-BR");
+      setDebugLines((p) => [...p, `${hhmmss} ${msg}`].slice(-16));
+    }
   }, []);
 
   const logError = useCallback(
@@ -450,6 +464,10 @@ export default function Chamada() {
 
       const isActive = meetingActiveRef.current;
       const { hasWake, hasEnd, residual } = readWakeSignals(t, { isActive });
+      log(
+        `wake-word: "${t}" → nome=${hasWake} encerrar=${hasEnd} ativo=${isActive}` +
+          (!isActive && !hasWake ? " (dormindo: só grava contexto, não responde)" : ""),
+      );
 
       // ATIVO + comando de desligar → dorme, com despedida fixa (sem n8n).
       if (isActive && hasEnd) {
@@ -485,7 +503,7 @@ export default function Chamada() {
       // ATIVO + fala normal → responde. DORMINDO + fala normal → só contexto.
       await handleSend(t, { responder: isActive });
     },
-    [handleSend, speakAndWait, logError, classificarChamada],
+    [handleSend, speakAndWait, log, logError, classificarChamada],
   );
 
   useEffect(() => {
@@ -500,8 +518,11 @@ export default function Chamada() {
     }
     const buffered = speechBufferRef.current.trim();
     speechBufferRef.current = "";
-    if (buffered) void handleVoiceUtteranceRef.current?.(buffered);
-  }, []);
+    if (buffered) {
+      log(`silêncio detectado — enviando fala completa: "${buffered}"`, "ok");
+      void handleVoiceUtteranceRef.current?.(buffered);
+    }
+  }, [log]);
 
   const scheduleSpeechFlush = useCallback(() => {
     if (speechTimerRef.current !== null) window.clearTimeout(speechTimerRef.current);
@@ -521,7 +542,10 @@ export default function Chamada() {
   const routeFinal = useCallback(
     (done: string) => {
       if (!done) return;
-      if (isAvatarSpeakingRef.current && !bargeInRef.current) return;
+      if (isAvatarSpeakingRef.current && !bargeInRef.current) {
+        log(`descartado (avatar falando, barge-in desligado): "${done}"`);
+        return;
+      }
       if (isAvatarSpeakingRef.current && bargeInRef.current) {
         try {
           (sessionRef.current as any)?.interrupt?.();
@@ -532,29 +556,49 @@ export default function Chamada() {
       speechBufferRef.current = `${speechBufferRef.current} ${done}`.trim();
       scheduleSpeechFlush();
     },
-    [scheduleSpeechFlush, logError],
+    [scheduleSpeechFlush, log, logError],
   );
 
   // ===== Web Speech =====
-  const maybeStartListening = useCallback(() => {
-    if (settingsRef.current?.sttEngine === "deepgram") return;
-    if (
-      shouldListenRef.current &&
-      !isMutedRef.current &&
-      recognitionRef.current &&
-      !isRecognitionRunningRef.current
-    ) {
+  const maybeStartListening = useCallback(
+    (reason = "automático") => {
+      if (settingsRef.current?.sttEngine === "deepgram") return;
+      // Cada condição é logada separadamente: quando a escuta "não acontece", é
+      // exatamente uma destas que está barrando, e adivinhar qual custa caro.
+      if (!shouldListenRef.current) {
+        log(`escuta NÃO iniciada (${reason}): shouldListen=false`, "err");
+        return;
+      }
+      if (isMutedRef.current) {
+        log(`escuta NÃO iniciada (${reason}): microfone mudo`, "err");
+        return;
+      }
+      if (!recognitionRef.current) {
+        log(`escuta NÃO iniciada (${reason}): SpeechRecognition não existe`, "err");
+        return;
+      }
+      if (isRecognitionRunningRef.current) {
+        log(`escuta já estava rodando (${reason})`);
+        return;
+      }
       try {
         recognitionRef.current.start();
-      } catch {
-        // Corrida start()/onstart — o reconhecimento já estava rodando. Ignora.
+        log(`recognition.start() chamado (${reason})`, "ok");
+      } catch (e) {
+        // Corrida start()/onstart — às vezes é inofensivo, mas se a escuta não vier
+        // é aqui que a causa aparece.
+        logError(`recognition.start() falhou (${reason})`, e);
       }
-    }
-  }, []);
+    },
+    [log, logError],
+  );
 
   useEffect(() => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) return;
+    if (!SR) {
+      log("Web Speech indisponível neste navegador — use Chrome ou troque para Deepgram", "err");
+      return;
+    }
     const rec = new SR();
     rec.lang = "pt-BR";
     rec.interimResults = true;
@@ -563,6 +607,7 @@ export default function Chamada() {
 
     rec.onstart = () => {
       isRecognitionRunningRef.current = true;
+      log("ouvindo (Web Speech ativo)", "ok");
     };
     rec.onresult = (event: any) => {
       try {
@@ -575,14 +620,25 @@ export default function Chamada() {
           else interim += transcript + " ";
         }
         const partial = interim.trim();
-        if (partial) routeInterim(partial);
-        for (const done of finals) routeFinal(done);
+        if (partial) {
+          log(`parcial: "${partial}"`);
+          routeInterim(partial);
+        }
+        for (const done of finals) {
+          log(`FINAL: "${done}"`, "ok");
+          routeFinal(done);
+        }
       } catch (error) {
         logError("erro no onresult", error);
       }
     };
     rec.onerror = (event: any) => {
       const err = event?.error ?? "desconhecido";
+      // "no-speech" é só silêncio, não é falha — não polui como erro.
+      log(
+        `SpeechRecognition erro: ${err} ${event?.message ?? ""}`,
+        err === "no-speech" ? "info" : "err",
+      );
       if (err === "not-allowed" || err === "service-not-allowed") {
         isMutedRef.current = true;
         shouldListenRef.current = false;
@@ -591,7 +647,8 @@ export default function Chamada() {
     };
     rec.onend = () => {
       isRecognitionRunningRef.current = false;
-      maybeStartListening(); // a Web Speech para sozinha às vezes
+      log("SpeechRecognition encerrou — tentando reiniciar");
+      maybeStartListening("reinício após onend"); // a Web Speech para sozinha às vezes
     };
 
     recognitionRef.current = rec;
@@ -758,7 +815,14 @@ export default function Chamada() {
         source.connect(proc);
         proc.connect(ctx.destination);
       } catch (e) {
-        logError("startDeepgram falhou", e);
+        // Caminho de falha silenciosa mais provável: DEEPGRAM_API_KEY ausente no
+        // servidor e nenhuma chave salva no console. O microfone já foi autorizado
+        // neste ponto, então de fora parece que "autorizei e ele não escuta".
+        logError("Deepgram falhou — a escuta NÃO vai funcionar", e);
+        log(
+          "verifique DEEPGRAM_API_KEY no servidor ou troque o motor para Web Speech no console",
+          "err",
+        );
         stopDeepgram();
       }
     },
@@ -770,7 +834,13 @@ export default function Chamada() {
   }, [startDeepgram]);
 
   const startListening = useCallback(async () => {
-    if (settingsRef.current?.sttEngine === "deepgram") {
+    const engine = settingsRef.current?.sttEngine ?? "webspeech";
+    const behavior = settingsRef.current?.meetConfigs[modeRef.current]?.behavior;
+    log(`iniciando escuta — motor=${engine} modo=${modeRef.current} comportamento=${behavior}`);
+    if (behavior === "wake") {
+      log('modo com wake-word: ele só responde depois de ser chamado pelo nome ("Nâner")');
+    }
+    if (engine === "deepgram") {
       void startDeepgram("entrando na chamada");
       return;
     }
@@ -782,6 +852,7 @@ export default function Chamada() {
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
       stream.getTracks().forEach((t) => t.stop());
+      log("permissão de microfone concedida", "ok");
     } catch (e) {
       logError("permissão de microfone negada", e);
       isMutedRef.current = true;
@@ -789,9 +860,9 @@ export default function Chamada() {
       setMuted(true);
       return;
     }
-    maybeStartListening();
+    maybeStartListening("entrando na chamada");
     setTurn((t) => (t === "speaking" ? t : "listening"));
-  }, [startDeepgram, maybeStartListening, logError]);
+  }, [startDeepgram, maybeStartListening, log, logError]);
 
   const muteMic = useCallback(() => {
     isMutedRef.current = true;
@@ -1243,6 +1314,33 @@ export default function Chamada() {
             muted
             className="h-full w-full object-cover [transform:scaleX(-1)]"
           />
+        </div>
+      )}
+
+      {/* ===== Diagnóstico (só com ?debug=1 na URL) =====
+          Não aparece no uso normal. Existe porque, sem log na tela, "ele não está me
+          escutando" é indistinguível de meia dúzia de causas diferentes. */}
+      {debugOn && (
+        <div className="absolute left-3 top-3 z-40 max-h-[70vh] w-[min(560px,46vw)] overflow-y-auto rounded-lg border border-white/15 bg-black/85 p-3 font-mono text-[10px] leading-relaxed text-white/80 backdrop-blur">
+          <div className="mb-1.5 flex items-center justify-between border-b border-white/10 pb-1.5">
+            <span className="font-semibold uppercase tracking-wider text-white/50">
+              diagnóstico
+            </span>
+            <span className="text-white/40">
+              {settingsRef.current?.sttEngine ?? "—"} · {modeRef.current} ·{" "}
+              {settingsRef.current?.meetConfigs[modeRef.current]?.behavior ?? "—"} ·{" "}
+              {muted ? "MUDO" : "ouvindo"}
+            </span>
+          </div>
+          {debugLines.length === 0 ? (
+            <div className="text-white/40">sem eventos ainda…</div>
+          ) : (
+            debugLines.map((l, i) => (
+              <div key={i} className="whitespace-pre-wrap break-words">
+                {l}
+              </div>
+            ))
+          )}
         </div>
       )}
 
